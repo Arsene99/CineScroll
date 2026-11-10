@@ -1,0 +1,6 @@
+{
+  "name": "CineScroll - Studio Vidéo Mobile",
+  "description": "Studio mobile épuré de création de génériques et textes vidéo défilants avec rendu temps réel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

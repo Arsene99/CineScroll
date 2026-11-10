@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0a0f"/>
+      <stop offset="100%" stop-color="#14141f"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="50%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="reel" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.03"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded squircle -->
+  <rect width="512" height="512" rx="110" fill="url(#bg)"/>
+  <rect x="8" y="8" width="496" height="496" rx="102" fill="none" stroke="url(#gold)" stroke-width="3" stroke-opacity="0.3"/>
+
+  <!-- Film Roll Silhouette Background -->
+  <circle cx="256" cy="256" r="170" fill="url(#reel)"/>
+  <circle cx="256" cy="256" r="140" fill="none" stroke="#262635" stroke-width="4" stroke-dasharray="14 10"/>
+
+  <!-- Decorative Cinema Scroll Lines (Bottom to Top movement) -->
+  <rect x="146" y="140" width="220" height="12" rx="6" fill="#f59e0b" fill-opacity="0.35"/>
+  <rect x="180" y="170" width="152" height="8" rx="4" fill="#f59e0b" fill-opacity="0.25"/>
+
+  <!-- Main Reel / Play Emblem -->
+  <circle cx="256" cy="256" r="64" fill="url(#gold)"/>
+  <!-- Film reel holes -->
+  <circle cx="256" cy="256" r="16" fill="#0a0a0f"/>
+  <circle cx="256" cy="222" r="9" fill="#0a0a0f"/>
+  <circle cx="256" cy="290" r="9" fill="#0a0a0f"/>
+  <circle cx="222" cy="256" r="9" fill="#0a0a0f"/>
+  <circle cx="290" cy="256" r="9" fill="#0a0a0f"/>
+
+  <!-- Lower Credits Scroll Lines -->
+  <rect x="160" y="340" width="192" height="10" rx="5" fill="#f59e0b" fill-opacity="0.4"/>
+  <rect x="190" y="366" width="132" height="8" rx="4" fill="#f59e0b" fill-opacity="0.3"/>
+  <rect x="216" y="390" width="80" height="6" rx="3" fill="#f59e0b" fill-opacity="0.2"/>
+</svg>
