@@ -237,22 +237,26 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
 
     recorder.start(100);
 
-    const fps = 30;
-    const totalFrames = Math.round(totalDuration * fps);
-    let frame = 0;
+    const startTime = performance.now();
+    const duration = totalDuration;
 
-    const exportLoop = () => {
-      if (frame >= totalFrames) {
-        recorder.stop();
+    const exportLoop = (now: number) => {
+      const elapsed = (now - startTime) / 1000;
+      if (elapsed >= duration) {
+        setCurrentTime(duration);
+        setExportProgress(100);
+        setTimeout(() => {
+          if (recorder.state !== 'inactive') recorder.stop();
+        }, 120);
         return;
       }
-      setCurrentTime((frame / totalFrames) * totalDuration);
-      frame++;
-      setExportProgress(Math.round((frame / totalFrames) * 100));
+
+      setCurrentTime(elapsed);
+      setExportProgress(Math.min(99, Math.round((elapsed / duration) * 100)));
       requestAnimationFrame(exportLoop);
     };
 
-    exportLoop();
+    requestAnimationFrame(exportLoop);
   };
 
   return (

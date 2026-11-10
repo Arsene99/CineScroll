@@ -24,13 +24,30 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+
+  const animFrameRef = React.useRef<number | null>(null);
+  const recorderRef = React.useRef<MediaRecorder | null>(null);
+
+  const handleClose = () => {
+    if (isExporting) {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        try { recorderRef.current.stop(); } catch {}
+      }
+      globalAudioEngine.stop();
+      setIsExporting(false);
+    }
+    onClose();
+  };
 
   if (!isOpen) return null;
 
   const startExport = async () => {
     setIsExporting(true);
     setProgress(0);
+    setElapsedSeconds(0);
     setDownloadUrl(null);
 
     // Create offscreen rendering canvas
@@ -77,6 +94,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     } catch {
       recorder = new MediaRecorder(canvasStream);
     }
+    recorderRef.current = recorder;
 
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
@@ -90,6 +108,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       setDownloadUrl(url);
       setIsExporting(false);
       setProgress(100);
+      setElapsedSeconds(config.speedDuration);
 
       // Trigger celebration
       confetti({
@@ -119,31 +138,37 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       globalAudioEngine.play(0);
     }
 
-    // Render frame sequence
-    const fps = 30;
-    const totalFrames = Math.max(30, Math.round(config.speedDuration * fps));
-    const dt = config.speedDuration / totalFrames;
+    // Render frame sequence synchronized to real wall-clock time
+    const duration = config.speedDuration;
+    const startTime = performance.now();
 
-    let currentFrame = 0;
+    const renderStep = (now: number) => {
+      const elapsed = (now - startTime) / 1000;
 
-    const renderStep = () => {
-      if (currentFrame >= totalFrames) {
-        recorder.stop();
-        globalAudioEngine.stop();
+      if (elapsed >= duration) {
+        // Draw the exact final frame
+        renderCreditsFrame(ctx, config, duration, parsedLines, bgImage || videoElement);
+        setProgress(100);
+        setElapsedSeconds(Math.round(duration));
+
+        // Flush and stop
+        setTimeout(() => {
+          if (recorder.state !== 'inactive') {
+            try { recorder.stop(); } catch {}
+          }
+          globalAudioEngine.stop();
+        }, 120);
         return;
       }
 
-      const t = currentFrame * dt;
-      renderCreditsFrame(ctx, config, t, parsedLines, bgImage || videoElement);
+      renderCreditsFrame(ctx, config, elapsed, parsedLines, bgImage || videoElement);
+      setProgress(Math.min(99, Math.round((elapsed / duration) * 100)));
+      setElapsedSeconds(Math.floor(elapsed));
 
-      currentFrame++;
-      setProgress(Math.round((currentFrame / totalFrames) * 100));
-
-      // Use requestAnimationFrame for smooth non-blocking export
-      requestAnimationFrame(renderStep);
+      animFrameRef.current = requestAnimationFrame(renderStep);
     };
 
-    renderStep();
+    animFrameRef.current = requestAnimationFrame(renderStep);
   };
 
   const handleShare = async () => {
@@ -181,7 +206,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             aria-label="Fermer"
             className="w-8 h-8 rounded-full bg-neutral-800 text-neutral-400 hover:text-white flex items-center justify-center"
           >
@@ -216,9 +241,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   {progress}%
                 </span>
               </div>
-              <span className="text-xs text-neutral-400 font-medium animate-pulse">
-                Rendu vidéo en cours...
-              </span>
+              <div className="flex flex-col items-center text-center">
+                <span className="text-xs text-neutral-200 font-mono font-medium">
+                  {elapsedSeconds}s / {config.speedDuration}s
+                </span>
+                <span className="text-[11px] text-neutral-400 font-medium">
+                  Encodage en temps réel fidèle
+                </span>
+              </div>
             </div>
           ) : downloadUrl ? (
             <div className="flex flex-col items-center space-y-2">
