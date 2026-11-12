@@ -32,7 +32,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [actualFormat, setActualFormat] = useState<string>('mp4');
 
-  const animFrameRef = useRef<number | null>(null);
+  const isCancelledRef = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
 
   // Clean up object URL when component unmounts or before a new one is set
@@ -45,8 +45,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   }, [downloadUrl]);
 
   const handleClose = () => {
+    isCancelledRef.current = true;
     if (isExporting) {
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       if (recorderRef.current && recorderRef.current.state !== 'inactive') {
         try { recorderRef.current.stop(); } catch {}
       }
@@ -69,6 +69,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     setProgress(0);
     setElapsedSeconds(0);
     setDownloadUrl(null);
+    isCancelledRef.current = false;
 
     // Create offscreen rendering canvas at requested resolution with guaranteed even pixel dimensions
     const exportCanvas = document.createElement('canvas');
@@ -83,8 +84,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
     const parsedLines = parseCreditsText(config.text);
 
-    // Capture video stream from canvas at 30fps
-    const canvasStream = exportCanvas.captureStream(30);
+    // Capture video stream from canvas
+    const canvasStream = exportCanvas.captureStream ? exportCanvas.captureStream(30) : (exportCanvas as any).mozCaptureStream(30);
+    const videoTrack = canvasStream.getVideoTracks()[0];
 
     // Add audio track if audio is active
     const audioDestination = globalAudioEngine.getAudioStreamDestination();
@@ -188,45 +190,65 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       });
     }
 
-    // Start recorder
-    recorder.start(100);
+    // Start recorder with clean 1-second segment intervals (avoiding corrupt microscopic fragments)
+    recorder.start(1000);
 
     // Start audio during rendering if enabled
     if (!config.audio.muted && config.audio.presetId !== 'none') {
       globalAudioEngine.play(0);
     }
 
-    // Render frame sequence synchronized to real wall-clock time
+    // Render frame sequence deterministically at exactly 30 frames per second
     const duration = config.speedDuration;
-    const startTime = performance.now();
+    const fps = 30;
+    const frameIntervalMs = 1000 / fps; // 33.33ms per frame
+    const totalFrames = Math.max(1, Math.round(duration * fps));
+    const loopStartTime = performance.now();
 
-    const renderStep = (now: number) => {
-      const elapsed = (now - startTime) / 1000;
+    let frameIdx = 0;
 
-      if (elapsed >= duration) {
-        // Draw the exact final frame
-        renderCreditsFrame(ctx, config, duration, parsedLines, bgImage || videoElement);
-        setProgress(100);
-        setElapsedSeconds(Math.round(duration));
+    while (frameIdx <= totalFrames && !isCancelledRef.current) {
+      const frameTime = Math.min(duration, frameIdx / fps);
+      renderCreditsFrame(ctx, config, frameTime, parsedLines, bgImage || videoElement);
 
-        // Flush and stop
-        setTimeout(() => {
-          if (recorder.state !== 'inactive') {
-            try { recorder.stop(); } catch {}
-          }
-          globalAudioEngine.stop();
-        }, 120);
-        return;
+      if (videoTrack && typeof (videoTrack as any).requestFrame === 'function') {
+        try {
+          (videoTrack as any).requestFrame();
+        } catch {}
       }
 
-      renderCreditsFrame(ctx, config, elapsed, parsedLines, bgImage || videoElement);
-      setProgress(Math.min(99, Math.round((elapsed / duration) * 100)));
-      setElapsedSeconds(Math.floor(elapsed));
+      const pct = Math.min(99, Math.round((frameIdx / totalFrames) * 100));
+      setProgress(pct);
+      setElapsedSeconds(Math.floor(frameTime));
+      frameIdx++;
 
-      animFrameRef.current = requestAnimationFrame(renderStep);
-    };
+      // Real-time synchronization pacing to match MediaRecorder capture rate
+      const nextTargetTime = loopStartTime + frameIdx * frameIntervalMs;
+      const waitMs = Math.max(0, nextTargetTime - performance.now());
+      if (waitMs > 0) {
+        await new Promise((r) => setTimeout(r, waitMs));
+      } else {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
 
-    animFrameRef.current = requestAnimationFrame(renderStep);
+    if (isCancelledRef.current) return;
+
+    // Draw exact final frame and request final track frame
+    renderCreditsFrame(ctx, config, duration, parsedLines, bgImage || videoElement);
+    if (videoTrack && typeof (videoTrack as any).requestFrame === 'function') {
+      try { (videoTrack as any).requestFrame(); } catch {}
+    }
+    setProgress(100);
+    setElapsedSeconds(Math.round(duration));
+
+    // Allow recorder to consume remaining frames before closing
+    await new Promise((r) => setTimeout(r, 200));
+
+    if (recorder.state !== 'inactive') {
+      try { recorder.stop(); } catch {}
+    }
+    globalAudioEngine.stop();
   };
 
   const handleShare = async () => {

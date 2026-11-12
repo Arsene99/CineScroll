@@ -131,7 +131,13 @@ export const TextPanel: React.FC<TextPanelProps> = ({ config, onChange }) => {
       <div className="space-y-1.5">
         <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
           {FONT_OPTIONS.map((font) => {
-            const isSelected = config.fontFamily === font.family;
+            const cleanCurrent = (config.fontFamily || '').toLowerCase().trim();
+            const cleanFont = font.family.toLowerCase().trim();
+            const isSelected =
+              cleanCurrent === cleanFont ||
+              cleanCurrent.startsWith(cleanFont) ||
+              cleanCurrent === font.name.toLowerCase() ||
+              cleanCurrent === font.id;
             return (
               <button
                 key={font.id}
@@ -141,7 +147,7 @@ export const TextPanel: React.FC<TextPanelProps> = ({ config, onChange }) => {
                     ? 'bg-neutral-800 border-amber-500 text-amber-400 font-bold shadow-sm'
                     : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-neutral-200'
                 }`}
-                style={{ fontFamily: font.family }}
+                style={{ fontFamily: `"${font.family}", sans-serif` }}
               >
                 {font.name}
               </button>

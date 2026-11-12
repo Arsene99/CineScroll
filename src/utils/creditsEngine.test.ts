@@ -7,6 +7,7 @@ import {
   formatTime,
   getCanvasDimensions,
   getResolutionDimensions,
+  getCanvasFont,
 } from './creditsEngine';
 
 test('parseCreditsText identifies headers, role-pairs, and blank lines', () => {
@@ -111,4 +112,16 @@ test('getResolutionDimensions produces even pixel dimensions for all resolutions
   assert.equal(res4k.width, 2160);
   assert.equal(res4k.height, 3840);
 });
+
+test('getCanvasFont produces valid font strings with fallbacks', () => {
+  const cinzel = getCanvasFont(700, 24, 'Cinzel');
+  assert.match(cinzel, /700 24px "Cinzel", Georgia/);
+
+  const bebas = getCanvasFont(400, 30, 'Bebas Neue');
+  assert.match(bebas, /400 30px "Bebas Neue", Impact/);
+
+  const montserrat = getCanvasFont('bold', 18, 'Montserrat');
+  assert.match(montserrat, /bold 18px "Montserrat", "Segoe UI"/);
+});
+
 

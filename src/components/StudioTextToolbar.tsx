@@ -285,7 +285,13 @@ export const StudioTextToolbar: React.FC<StudioTextToolbarProps> = ({
           {activeTool === 'font' && (
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-[320px] py-0.5">
               {FONT_OPTIONS.map((font) => {
-                const isSelected = config.fontFamily === font.family;
+                const cleanCurrent = (config.fontFamily || '').toLowerCase().trim();
+                const cleanFont = font.family.toLowerCase().trim();
+                const isSelected =
+                  cleanCurrent === cleanFont ||
+                  cleanCurrent.startsWith(cleanFont) ||
+                  cleanCurrent === font.name.toLowerCase() ||
+                  cleanCurrent === font.id;
                 return (
                   <button
                     key={font.id}
@@ -298,7 +304,7 @@ export const StudioTextToolbar: React.FC<StudioTextToolbarProps> = ({
                         ? 'bg-neutral-800 border border-amber-500 text-amber-400 font-bold shadow-sm'
                         : 'bg-neutral-900 hover:bg-neutral-850 text-neutral-300'
                     }`}
-                    style={{ fontFamily: font.family }}
+                    style={{ fontFamily: `"${font.family}", sans-serif` }}
                   >
                     {font.name}
                   </button>

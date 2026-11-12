@@ -261,28 +261,34 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
       confetti({ particleCount: 70, spread: 60 });
     };
 
-    recorder.start(100);
+    recorder.start(1000);
 
-    const startTime = performance.now();
+    const fps = 30;
+    const frameIntervalMs = 1000 / fps;
     const duration = totalDuration;
+    const totalFrames = Math.max(1, Math.round(duration * fps));
+    const loopStartTime = performance.now();
 
-    const exportLoop = (now: number) => {
-      const elapsed = (now - startTime) / 1000;
-      if (elapsed >= duration) {
-        setCurrentTime(duration);
-        setExportProgress(100);
-        setTimeout(() => {
-          if (recorder.state !== 'inactive') recorder.stop();
-        }, 120);
-        return;
+    for (let frameIdx = 0; frameIdx <= totalFrames; frameIdx++) {
+      const frameTime = Math.min(duration, frameIdx / fps);
+      setCurrentTime(frameTime);
+      setExportProgress(Math.min(99, Math.round((frameIdx / totalFrames) * 100)));
+
+      const nextTarget = loopStartTime + frameIdx * frameIntervalMs;
+      const waitMs = Math.max(0, nextTarget - performance.now());
+      if (waitMs > 0) {
+        await new Promise((r) => setTimeout(r, waitMs));
+      } else {
+        await new Promise((r) => setTimeout(r, 0));
       }
+    }
 
-      setCurrentTime(elapsed);
-      setExportProgress(Math.min(99, Math.round((elapsed / duration) * 100)));
-      requestAnimationFrame(exportLoop);
-    };
-
-    requestAnimationFrame(exportLoop);
+    setCurrentTime(duration);
+    setExportProgress(100);
+    await new Promise((r) => setTimeout(r, 200));
+    if (recorder.state !== 'inactive') {
+      try { recorder.stop(); } catch {}
+    }
   };
 
   return (

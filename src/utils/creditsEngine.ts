@@ -89,6 +89,62 @@ export function calculateScrollPosition(
 }
 
 /**
+ * Generates valid CSS font string with robust fallback typography chains.
+ * Always produces valid syntax for Canvas 2D contexts, preventing silent font drop.
+ */
+export function getCanvasFont(
+  weight: number | string,
+  sizePx: number,
+  fontFamily: string
+): string {
+  const clean = (fontFamily || 'Cinzel')
+    .split(',')[0]
+    .replace(/['"]/g, '')
+    .trim();
+
+  switch (clean.toLowerCase()) {
+    case 'cinzel':
+      return `${weight} ${sizePx}px "Cinzel", Georgia, "Times New Roman", serif`;
+    case 'montserrat':
+      return `${weight} ${sizePx}px "Montserrat", "Segoe UI", Roboto, sans-serif`;
+    case 'bebas neue':
+    case 'bebas':
+      return `${weight} ${sizePx}px "Bebas Neue", Impact, "Arial Narrow Bold", sans-serif`;
+    case 'playfair display':
+    case 'playfair':
+      return `${weight} ${sizePx}px "Playfair Display", Didot, Georgia, serif`;
+    case 'courier prime':
+    case 'courier':
+      return `${weight} ${sizePx}px "Courier Prime", "Courier New", monospace`;
+    case 'space grotesk':
+    case 'space':
+      return `${weight} ${sizePx}px "Space Grotesk", "Trebuchet MS", sans-serif`;
+    case 'inter':
+      return `${weight} ${sizePx}px "Inter", system-ui, -apple-system, sans-serif`;
+    default:
+      return `${weight} ${sizePx}px "${clean}", sans-serif`;
+  }
+}
+
+/**
+ * Calculates exact line height for a parsed credit item.
+ */
+export function getLineHeight(
+  line: ParsedCreditLine,
+  baseFontSize: number,
+  lineSpacing: number
+): number {
+  if (line.type === 'blank') {
+    return baseFontSize * 1.0;
+  }
+  if (line.type === 'title') {
+    const titleSize = Math.round(baseFontSize * 1.4);
+    return titleSize * lineSpacing + baseFontSize * 0.5;
+  }
+  return baseFontSize * lineSpacing;
+}
+
+/**
  * Measures total vertical height occupied by the parsed credits text.
  */
 export function measureCreditsContentHeight(
@@ -98,13 +154,7 @@ export function measureCreditsContentHeight(
 ): number {
   let totalHeight = 0;
   for (const line of parsedLines) {
-    if (line.type === 'blank') {
-      totalHeight += baseFontSize * 1.0;
-    } else if (line.type === 'title') {
-      totalHeight += baseFontSize * 1.8 * lineSpacing + baseFontSize * 0.5;
-    } else {
-      totalHeight += baseFontSize * lineSpacing;
-    }
+    totalHeight += getLineHeight(line, baseFontSize, lineSpacing);
   }
   return Math.max(totalHeight, baseFontSize * 2);
 }
@@ -290,7 +340,7 @@ export function renderCreditsFrame(
 
     if (line.type === 'title') {
       const titleSize = Math.round(baseFontSize * 1.4);
-      ctx.font = `700 ${titleSize}px "${config.fontFamily}", sans-serif`;
+      ctx.font = getCanvasFont(700, titleSize, config.fontFamily);
       ctx.fillStyle = config.color;
       ctx.textAlign = 'center';
 
@@ -310,13 +360,13 @@ export function renderCreditsFrame(
       const rightColX = width / 2 + colGap / 2;
 
       // Role
-      ctx.font = `500 ${roleSize}px "${config.fontFamily}", sans-serif`;
+      ctx.font = getCanvasFont(500, roleSize, config.fontFamily);
       ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
       ctx.textAlign = 'right';
       ctx.fillText(line.role || '', leftColX, yCursor);
 
       // Name
-      ctx.font = `700 ${nameSize}px "${config.fontFamily}", sans-serif`;
+      ctx.font = getCanvasFont(700, nameSize, config.fontFamily);
       ctx.fillStyle = config.color;
       ctx.textAlign = 'left';
       ctx.fillText(line.name || '', rightColX, yCursor);
@@ -327,7 +377,7 @@ export function renderCreditsFrame(
 
     // Regular line or unseparated role pair
     const textToDraw = line.type === 'role-pair' ? `${line.role} : ${line.name}` : (line.text || '');
-    ctx.font = `600 ${baseFontSize}px "${config.fontFamily}", sans-serif`;
+    ctx.font = getCanvasFont(600, baseFontSize, config.fontFamily);
     ctx.fillStyle = config.color;
 
     let textX = width / 2;

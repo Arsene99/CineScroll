@@ -59,13 +59,13 @@ export interface FontOption {
 }
 
 export const FONT_OPTIONS: FontOption[] = [
-  { id: 'cinzel', name: 'Cinzel', family: 'Cinzel, Georgia, "Times New Roman", serif', category: 'Cinéma classique' },
-  { id: 'montserrat', name: 'Montserrat', family: 'Montserrat, "Segoe UI", Roboto, sans-serif', category: 'Moderne fort' },
-  { id: 'bebas', name: 'Bebas Neue', family: '"Bebas Neue", Impact, "Arial Narrow Bold", sans-serif', category: 'Titres percutants' },
-  { id: 'playfair', name: 'Playfair', family: '"Playfair Display", Didot, Georgia, serif', category: 'Élégant & Roman' },
-  { id: 'courier', name: 'Courier', family: '"Courier Prime", "Courier New", monospace', category: 'Scénario & Script' },
-  { id: 'space', name: 'Space Grotesk', family: '"Space Grotesk", "Trebuchet MS", sans-serif', category: 'Futuriste' },
-  { id: 'inter', name: 'Inter', family: 'Inter, system-ui, -apple-system, sans-serif', category: 'Neutre & Minimal' },
+  { id: 'cinzel', name: 'Cinzel', family: 'Cinzel', category: 'Cinéma classique' },
+  { id: 'montserrat', name: 'Montserrat', family: 'Montserrat', category: 'Moderne fort' },
+  { id: 'bebas', name: 'Bebas Neue', family: 'Bebas Neue', category: 'Titres percutants' },
+  { id: 'playfair', name: 'Playfair', family: 'Playfair Display', category: 'Élégant & Roman' },
+  { id: 'courier', name: 'Courier', family: 'Courier Prime', category: 'Scénario & Script' },
+  { id: 'space', name: 'Space Grotesk', family: 'Space Grotesk', category: 'Futuriste' },
+  { id: 'inter', name: 'Inter', family: 'Inter', category: 'Neutre & Minimal' },
 ];
 
 export interface TextPresetTemplate {
