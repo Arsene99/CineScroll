@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ArrowLeft, Plus, Trash2, Play, Pause, Download, Upload, Sparkles, X } from 'lucide-react';
 import { SubtitleItem, AspectRatio, BackgroundConfig } from '../types';
-import { formatTime, getCanvasDimensions } from '../utils/creditsEngine';
+import { formatTime, formatFileSize, getCanvasDimensions, getResolutionDimensions } from '../utils/creditsEngine';
 import { globalAudioEngine } from '../utils/audioSynth';
+import { exportVideo } from '../utils/videoExporter';
 import confetti from 'canvas-confetti';
 
 interface SubtitlesStudioProps {
@@ -103,12 +104,98 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
     };
   }, [isPlaying, step]);
 
-  // Find active subtitle
-  const activeSubtitle = subtitles.find(
-    (s) => currentTime >= s.startTime && currentTime <= s.endTime
+  // Shared subtitle frame renderer for both live preview and fast export
+  const drawSubtitleFrame = useCallback(
+    (ctx: CanvasRenderingContext2D, timeSec: number) => {
+      const { width, height } = ctx.canvas;
+      const activeSub = subtitles.find(
+        (s) => timeSec >= s.startTime && timeSec <= s.endTime
+      );
+
+      ctx.clearRect(0, 0, width, height);
+
+      if (background.source === 'color') {
+        ctx.fillStyle = background.value;
+        ctx.fillRect(0, 0, width, height);
+      } else if (bgImageRef.current) {
+        const img = bgImageRef.current;
+        const hRatio = width / img.naturalWidth;
+        const vRatio = height / img.naturalHeight;
+        const ratio = Math.max(hRatio, vRatio);
+        const shiftX = (width - img.naturalWidth * ratio) / 2;
+        const shiftY = (height - img.naturalHeight * ratio) / 2;
+        ctx.drawImage(
+          img,
+          0,
+          0,
+          img.naturalWidth,
+          img.naturalHeight,
+          shiftX,
+          shiftY,
+          img.naturalWidth * ratio,
+          img.naturalHeight * ratio
+        );
+      } else if (videoElementRef.current && background.source === 'video') {
+        const vid = videoElementRef.current;
+        const hRatio = width / (vid.videoWidth || width);
+        const vRatio = height / (vid.videoHeight || height);
+        const ratio = Math.max(hRatio, vRatio);
+        const shiftX = (width - (vid.videoWidth || width) * ratio) / 2;
+        const shiftY = (height - (vid.videoHeight || height) * ratio) / 2;
+        ctx.drawImage(
+          vid,
+          0,
+          0,
+          vid.videoWidth || width,
+          vid.videoHeight || height,
+          shiftX,
+          shiftY,
+          (vid.videoWidth || width) * ratio,
+          (vid.videoHeight || height) * ratio
+        );
+      } else {
+        ctx.fillStyle = '#0a0a0f';
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      if (background.overlayOpacity > 0) {
+        ctx.fillStyle = `rgba(0, 0, 0, ${background.overlayOpacity})`;
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      if (activeSub && activeSub.text.trim()) {
+        ctx.save();
+        const refWidth = getCanvasDimensions(aspectRatio, 1080).width;
+        const scale = width / refWidth;
+        const scaledSize = Math.max(12, Math.round(fontSize * 1.5 * scale));
+        ctx.font = `600 ${scaledSize}px "Inter", sans-serif`;
+        ctx.textAlign = 'center';
+
+        const padding = Math.round(16 * scale);
+        const textMetrics = ctx.measureText(activeSub.text);
+        const textWidth = textMetrics.width;
+        const textHeight = scaledSize;
+
+        const subY = height * 0.82;
+        const boxX = (width - textWidth) / 2 - padding;
+        const boxY = subY - textHeight + Math.round(4 * scale);
+        const boxWidth = textWidth + padding * 2;
+        const boxHeight = textHeight + padding;
+
+        ctx.fillStyle = bgColor;
+        ctx.beginPath();
+        ctx.roundRect(boxX, boxY, boxWidth, boxHeight, Math.round(10 * scale));
+        ctx.fill();
+
+        ctx.fillStyle = color;
+        ctx.fillText(activeSub.text, width / 2, subY);
+        ctx.restore();
+      }
+    },
+    [aspectRatio, background, subtitles, fontSize, color, bgColor]
   );
 
-  // Render subtitle frame onto canvas
+  // Render subtitle frame onto preview canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -121,69 +208,8 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
       canvas.height = height;
     }
 
-    // Clear
-    ctx.clearRect(0, 0, width, height);
-
-    // Background
-    if (background.source === 'color') {
-      ctx.fillStyle = background.value;
-      ctx.fillRect(0, 0, width, height);
-    } else if (bgImageRef.current) {
-      const img = bgImageRef.current;
-      const hRatio = width / img.naturalWidth;
-      const vRatio = height / img.naturalHeight;
-      const ratio = Math.max(hRatio, vRatio);
-      const shiftX = (width - img.naturalWidth * ratio) / 2;
-      const shiftY = (height - img.naturalHeight * ratio) / 2;
-      ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, shiftX, shiftY, img.naturalWidth * ratio, img.naturalHeight * ratio);
-    } else if (videoElementRef.current && background.source === 'video') {
-      const vid = videoElementRef.current;
-      const hRatio = width / (vid.videoWidth || width);
-      const vRatio = height / (vid.videoHeight || height);
-      const ratio = Math.max(hRatio, vRatio);
-      const shiftX = (width - (vid.videoWidth || width) * ratio) / 2;
-      const shiftY = (height - (vid.videoHeight || height) * ratio) / 2;
-      ctx.drawImage(vid, 0, 0, vid.videoWidth || width, vid.videoHeight || height, shiftX, shiftY, (vid.videoWidth || width) * ratio, (vid.videoHeight || height) * ratio);
-    } else {
-      ctx.fillStyle = '#0a0a0f';
-      ctx.fillRect(0, 0, width, height);
-    }
-
-    // Dark overlay
-    if (background.overlayOpacity > 0) {
-      ctx.fillStyle = `rgba(0, 0, 0, ${background.overlayOpacity})`;
-      ctx.fillRect(0, 0, width, height);
-    }
-
-    // Draw active subtitle
-    if (activeSubtitle && activeSubtitle.text.trim()) {
-      ctx.save();
-      ctx.font = `600 ${fontSize * 1.5}px "Inter", sans-serif`;
-      ctx.textAlign = 'center';
-
-      const padding = 16;
-      const textMetrics = ctx.measureText(activeSubtitle.text);
-      const textWidth = textMetrics.width;
-      const textHeight = fontSize * 1.5;
-
-      const subY = height * 0.82;
-      const boxX = (width - textWidth) / 2 - padding;
-      const boxY = subY - textHeight + 4;
-      const boxWidth = textWidth + padding * 2;
-      const boxHeight = textHeight + padding;
-
-      // Subtitle background pill / box
-      ctx.fillStyle = bgColor;
-      ctx.beginPath();
-      ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 10);
-      ctx.fill();
-
-      // Subtitle text
-      ctx.fillStyle = color;
-      ctx.fillText(activeSubtitle.text, width / 2, subY);
-      ctx.restore();
-    }
-  }, [aspectRatio, background, activeSubtitle, fontSize, color, bgColor]);
+    drawSubtitleFrame(ctx, currentTime);
+  }, [aspectRatio, currentTime, drawSubtitleFrame]);
 
   const handleAddSubtitle = () => {
     const lastSub = subtitles[subtitles.length - 1];
@@ -212,82 +238,48 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
   };
 
   const [exportExt, setExportExt] = useState('mp4');
+  const [exportSizeBytes, setExportSizeBytes] = useState(0);
 
   const handleExportSubtitlesVideo = async () => {
     setIsExporting(true);
     setExportProgress(0);
-    setDownloadUrl(null);
+    setExportSizeBytes(0);
+    setDownloadUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const hasMotionBg = background.source === 'video';
+    const { width, height, bitrate } = getResolutionDimensions(aspectRatio, '720p', 'balanced', hasMotionBg);
+    const signal = { cancelled: false };
 
-    const stream = canvas.captureStream(30);
-    const recordedChunks: Blob[] = [];
-
-    let chosenMime = '';
-    let ext = 'mp4';
-    const mp4Candidates = ['video/mp4;codecs=avc1', 'video/mp4'];
-    for (const cand of mp4Candidates) {
-      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(cand)) {
-        chosenMime = cand;
-        ext = 'mp4';
-        break;
-      }
-    }
-    if (!chosenMime) {
-      chosenMime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9'
-        : 'video/webm';
-      ext = 'webm';
-    }
-    setExportExt(ext);
-
-    let recorder: MediaRecorder;
     try {
-      recorder = new MediaRecorder(stream, { mimeType: chosenMime || undefined, videoBitsPerSecond: 4_000_000 });
-    } catch {
-      recorder = new MediaRecorder(stream);
-    }
+      const result = await exportVideo({
+        width,
+        height,
+        fps: 30,
+        durationSec: totalDuration,
+        bitrate,
+        format: 'mp4',
+        bgImage: bgImageRef.current,
+        bgVideo: hasMotionBg ? videoElementRef.current : null,
+        signal,
+        drawFrame: (ctx, timeSec) => {
+          drawSubtitleFrame(ctx, timeSec);
+        },
+        onProgress: (pct) => {
+          setExportProgress(pct);
+        },
+      });
 
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) recordedChunks.push(e.data);
-    };
-
-    recorder.onstop = () => {
-      const blob = new Blob(recordedChunks, { type: recorder.mimeType || (ext === 'mp4' ? 'video/mp4' : 'video/webm') });
-      setDownloadUrl(URL.createObjectURL(blob));
+      setExportExt(result.format);
+      setExportSizeBytes(result.blob.size);
+      setDownloadUrl(URL.createObjectURL(result.blob));
       setIsExporting(false);
       setExportProgress(100);
       confetti({ particleCount: 70, spread: 60 });
-    };
-
-    recorder.start(1000);
-
-    const fps = 30;
-    const frameIntervalMs = 1000 / fps;
-    const duration = totalDuration;
-    const totalFrames = Math.max(1, Math.round(duration * fps));
-    const loopStartTime = performance.now();
-
-    for (let frameIdx = 0; frameIdx <= totalFrames; frameIdx++) {
-      const frameTime = Math.min(duration, frameIdx / fps);
-      setCurrentTime(frameTime);
-      setExportProgress(Math.min(99, Math.round((frameIdx / totalFrames) * 100)));
-
-      const nextTarget = loopStartTime + frameIdx * frameIntervalMs;
-      const waitMs = Math.max(0, nextTarget - performance.now());
-      if (waitMs > 0) {
-        await new Promise((r) => setTimeout(r, waitMs));
-      } else {
-        await new Promise((r) => setTimeout(r, 0));
-      }
-    }
-
-    setCurrentTime(duration);
-    setExportProgress(100);
-    await new Promise((r) => setTimeout(r, 200));
-    if (recorder.state !== 'inactive') {
-      try { recorder.stop(); } catch {}
+    } catch {
+      setIsExporting(false);
     }
   };
 
@@ -489,7 +481,14 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
         <div className="fixed inset-x-4 bottom-4 z-50 p-3 bg-neutral-900 border border-sky-500/80 rounded-2xl flex items-center justify-between shadow-2xl">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-sky-400" />
-            <span className="text-xs font-semibold text-neutral-100">Vidéo sous-titrée prête</span>
+            <div className="flex flex-col">
+              <span className="text-xs font-semibold text-neutral-100">Vidéo prête</span>
+              {exportSizeBytes > 0 && (
+                <span className="text-[10px] font-mono text-neutral-400">
+                  {formatFileSize(exportSizeBytes)} • {exportExt.toUpperCase()}
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <a

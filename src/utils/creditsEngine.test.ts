@@ -8,6 +8,8 @@ import {
   getCanvasDimensions,
   getResolutionDimensions,
   getCanvasFont,
+  estimateExportSizeMB,
+  formatFileSize,
 } from './creditsEngine';
 
 test('parseCreditsText identifies headers, role-pairs, and blank lines', () => {
@@ -123,5 +125,26 @@ test('getCanvasFont produces valid font strings with fallbacks', () => {
   const montserrat = getCanvasFont('bold', 18, 'Montserrat');
   assert.match(montserrat, /bold 18px "Montserrat", "Segoe UI"/);
 });
+
+test('getResolutionDimensions and estimateExportSizeMB keep 720p text exports compact', () => {
+  const compact720 = getResolutionDimensions('9:16', '720p', 'compact', false);
+  const balanced720 = getResolutionDimensions('9:16', '720p', 'balanced', false);
+  const high720 = getResolutionDimensions('9:16', '720p', 'high', false);
+
+  assert.ok(compact720.bitrate < balanced720.bitrate);
+  assert.ok(balanced720.bitrate < high720.bitrate);
+
+  // 25s 720p balanced text-only export should estimate well under 3 MB (vs 17 MB previously)
+  const estBalanced = estimateExportSizeMB(25, balanced720.bitrate, false);
+  const estCompact = estimateExportSizeMB(25, compact720.bitrate, false);
+  assert.ok(estCompact <= 1.5, `Expected compact <= 1.5 MB, got ${estCompact}`);
+  assert.ok(estBalanced <= 2.5, `Expected balanced <= 2.5 MB, got ${estBalanced}`);
+});
+
+test('formatFileSize formats bytes cleanly in Ko and Mo', () => {
+  assert.equal(formatFileSize(512 * 1024), '512 Ko');
+  assert.equal(formatFileSize(1.8 * 1024 * 1024), '1.8 Mo');
+});
+
 
 

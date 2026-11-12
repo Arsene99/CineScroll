@@ -180,44 +180,84 @@ export function formatTime(seconds: number, includeSubseconds = false): string {
  */
 export type ExportResolution = '720p' | '1080p' | '4k';
 export type ExportFormat = 'mp4' | 'webm';
+export type ExportQuality = 'compact' | 'balanced' | 'high';
 
 /**
- * Calculates standard video pixel dimensions and bitrates for export.
+ * Calculates standard video pixel dimensions and optimized bitrates for export.
  * Guarantees even dimensions required by video encoders (H.264 / VP9).
  */
 export function getResolutionDimensions(
   aspectRatio: '9:16' | '16:9' | '1:1',
-  resolution: ExportResolution
+  resolution: ExportResolution,
+  quality: ExportQuality = 'balanced',
+  hasMotionBackground = false
 ): { width: number; height: number; bitrate: number; label: string } {
-  switch (resolution) {
-    case '720p':
-      if (aspectRatio === '9:16') {
-        return { width: 720, height: 1280, bitrate: 2_500_000, label: '720×1280 (HD)' };
-      }
-      if (aspectRatio === '16:9') {
-        return { width: 1280, height: 720, bitrate: 2_500_000, label: '1280×720 (HD)' };
-      }
-      return { width: 720, height: 720, bitrate: 2_000_000, label: '720×720 (HD Carré)' };
+  const qualityMultiplier = quality === 'compact' ? 0.55 : quality === 'high' ? 1.9 : 1.0;
+  const motionMultiplier = hasMotionBackground ? 1.45 : 1.0;
 
-    case '4k':
-      if (aspectRatio === '9:16') {
-        return { width: 2160, height: 3840, bitrate: 12_000_000, label: '2160×3840 (4K UHD)' };
-      }
-      if (aspectRatio === '16:9') {
-        return { width: 3840, height: 2160, bitrate: 12_000_000, label: '3840×2160 (4K UHD)' };
-      }
-      return { width: 2160, height: 2160, bitrate: 10_000_000, label: '2160×2160 (4K Carré)' };
+  let width = 1080;
+  let height = 1920;
+  let baseTextBitrate = 1_400_000;
+  let label = '1080×1920 (Full HD)';
 
-    case '1080p':
-    default:
-      if (aspectRatio === '9:16') {
-        return { width: 1080, height: 1920, bitrate: 5_000_000, label: '1080×1920 (Full HD)' };
-      }
-      if (aspectRatio === '16:9') {
-        return { width: 1920, height: 1080, bitrate: 5_000_000, label: '1920×1080 (Full HD)' };
-      }
-      return { width: 1080, height: 1080, bitrate: 4_000_000, label: '1080×1080 (Full HD Carré)' };
+  if (resolution === '720p') {
+    baseTextBitrate = 780_000;
+    if (aspectRatio === '9:16') {
+      width = 720; height = 1280; label = '720×1280 (HD)';
+    } else if (aspectRatio === '16:9') {
+      width = 1280; height = 720; label = '1280×720 (HD)';
+    } else {
+      width = 720; height = 720; baseTextBitrate = 680_000; label = '720×720 (HD Carré)';
+    }
+  } else if (resolution === '4k') {
+    baseTextBitrate = 4_000_000;
+    if (aspectRatio === '9:16') {
+      width = 2160; height = 3840; label = '2160×3840 (4K UHD)';
+    } else if (aspectRatio === '16:9') {
+      width = 3840; height = 2160; label = '3840×2160 (4K UHD)';
+    } else {
+      width = 2160; height = 2160; baseTextBitrate = 3_400_000; label = '2160×2160 (4K Carré)';
+    }
+  } else {
+    baseTextBitrate = 1_400_000;
+    if (aspectRatio === '9:16') {
+      width = 1080; height = 1920; label = '1080×1920 (Full HD)';
+    } else if (aspectRatio === '16:9') {
+      width = 1920; height = 1080; label = '1920×1080 (Full HD)';
+    } else {
+      width = 1080; height = 1080; baseTextBitrate = 1_200_000; label = '1080×1080 (Full HD Carré)';
+    }
   }
+
+  const bitrate = Math.round(baseTextBitrate * qualityMultiplier * motionMultiplier);
+  return { width, height, bitrate, label };
+}
+
+/**
+ * Estimates exported file size in MB assuming variable bitrate compression for text scrolls.
+ */
+export function estimateExportSizeMB(
+  durationSeconds: number,
+  videoBitrateBps: number,
+  hasAudio: boolean,
+  audioBitrateBps = 96_000
+): number {
+  if (durationSeconds <= 0) return 0;
+  // Variable bitrate (VBR) scrolling text typically averages ~70% of target bitrate ceiling
+  const effectiveVideoBps = videoBitrateBps * 0.7;
+  const totalBps = effectiveVideoBps + (hasAudio ? audioBitrateBps : 0);
+  const bytes = (totalBps * durationSeconds) / 8;
+  return Math.max(0.1, Number((bytes / (1024 * 1024)).toFixed(1)));
+}
+
+/**
+ * Formats byte sizes cleanly in French (Ko / Mo).
+ */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(bytes / 1024))} Ko`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
 /**
@@ -242,6 +282,63 @@ export function getCanvasDimensions(aspectRatio: '9:16' | '16:9' | '1:1', maxDim
   }
 }
 
+export interface RenderFrameOptions {
+  cachedBackground?: HTMLCanvasElement | null;
+  fastShadow?: boolean;
+}
+
+/**
+ * Pre-renders static color, gradient, or photo background (+ overlay) once before an export
+ * so hundreds/thousands of frames avoid re-scaling images or recreating gradients.
+ */
+export function createStaticBackgroundCache(
+  width: number,
+  height: number,
+  config: CreditsConfig,
+  bgImage: HTMLImageElement | null
+): HTMLCanvasElement | null {
+  if (config.background.source === 'video' || typeof document === 'undefined') {
+    return null;
+  }
+
+  const cache = document.createElement('canvas');
+  cache.width = width;
+  cache.height = height;
+  const ctx = cache.getContext('2d');
+  if (!ctx) return null;
+
+  if (config.background.source === 'color') {
+    ctx.fillStyle = config.background.value || '#050505';
+    ctx.fillRect(0, 0, width, height);
+  } else if (bgImage) {
+    try {
+      const mediaW = bgImage.naturalWidth || width;
+      const mediaH = bgImage.naturalHeight || height;
+      const ratio = Math.max(width / mediaW, height / mediaH);
+      const centerShiftX = (width - mediaW * ratio) / 2;
+      const centerShiftY = (height - mediaH * ratio) / 2;
+      ctx.drawImage(bgImage, 0, 0, mediaW, mediaH, centerShiftX, centerShiftY, mediaW * ratio, mediaH * ratio);
+    } catch {
+      ctx.fillStyle = '#0a0a0c';
+      ctx.fillRect(0, 0, width, height);
+    }
+  } else {
+    const grad = ctx.createLinearGradient(0, 0, 0, height);
+    grad.addColorStop(0, '#0c0d14');
+    grad.addColorStop(0.5, '#050507');
+    grad.addColorStop(1, '#020203');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  if (config.background.overlayOpacity > 0) {
+    ctx.fillStyle = `rgba(0, 0, 0, ${config.background.overlayOpacity})`;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  return cache;
+}
+
 /**
  * Renders one frame of credits onto a 2D canvas context.
  */
@@ -250,7 +347,8 @@ export function renderCreditsFrame(
   config: CreditsConfig,
   currentTime: number,
   parsedLines: ParsedCreditLine[],
-  bgMedia: HTMLImageElement | HTMLVideoElement | null
+  bgMedia: HTMLImageElement | HTMLVideoElement | null,
+  options?: RenderFrameOptions
 ) {
   const { width, height } = ctx.canvas;
   const progress = config.speedDuration > 0 ? currentTime / config.speedDuration : 0;
@@ -266,43 +364,43 @@ export function renderCreditsFrame(
     config.lineSpacing
   );
 
-  // 1. Clear frame
-  ctx.clearRect(0, 0, width, height);
+  // 1 & 2 & 3. Background (fast cached blit during export, or live render)
+  if (options?.cachedBackground) {
+    ctx.drawImage(options.cachedBackground, 0, 0);
+  } else {
+    ctx.clearRect(0, 0, width, height);
 
-  // 2. Draw Background
-  if (config.background.source === 'color') {
-    ctx.fillStyle = config.background.value || '#050505';
-    ctx.fillRect(0, 0, width, height);
-  } else if (bgMedia) {
-    try {
-      // Cover fit image / video
-      const mediaW = (bgMedia as HTMLVideoElement).videoWidth || (bgMedia as HTMLImageElement).naturalWidth || width;
-      const mediaH = (bgMedia as HTMLVideoElement).videoHeight || (bgMedia as HTMLImageElement).naturalHeight || height;
-      const hRatio = width / mediaW;
-      const vRatio = height / mediaH;
-      const ratio = Math.max(hRatio, vRatio);
-      const centerShiftX = (width - mediaW * ratio) / 2;
-      const centerShiftY = (height - mediaH * ratio) / 2;
+    if (config.background.source === 'color') {
+      ctx.fillStyle = config.background.value || '#050505';
+      ctx.fillRect(0, 0, width, height);
+    } else if (bgMedia) {
+      try {
+        const mediaW = (bgMedia as HTMLVideoElement).videoWidth || (bgMedia as HTMLImageElement).naturalWidth || width;
+        const mediaH = (bgMedia as HTMLVideoElement).videoHeight || (bgMedia as HTMLImageElement).naturalHeight || height;
+        const hRatio = width / mediaW;
+        const vRatio = height / mediaH;
+        const ratio = Math.max(hRatio, vRatio);
+        const centerShiftX = (width - mediaW * ratio) / 2;
+        const centerShiftY = (height - mediaH * ratio) / 2;
 
-      ctx.drawImage(bgMedia, 0, 0, mediaW, mediaH, centerShiftX, centerShiftY, mediaW * ratio, mediaH * ratio);
-    } catch {
-      ctx.fillStyle = '#0a0a0c';
+        ctx.drawImage(bgMedia, 0, 0, mediaW, mediaH, centerShiftX, centerShiftY, mediaW * ratio, mediaH * ratio);
+      } catch {
+        ctx.fillStyle = '#0a0a0c';
+        ctx.fillRect(0, 0, width, height);
+      }
+    } else {
+      const grad = ctx.createLinearGradient(0, 0, 0, height);
+      grad.addColorStop(0, '#0c0d14');
+      grad.addColorStop(0.5, '#050507');
+      grad.addColorStop(1, '#020203');
+      ctx.fillStyle = grad;
       ctx.fillRect(0, 0, width, height);
     }
-  } else {
-    // Default cinematic dark gradient
-    const grad = ctx.createLinearGradient(0, 0, 0, height);
-    grad.addColorStop(0, '#0c0d14');
-    grad.addColorStop(0.5, '#050507');
-    grad.addColorStop(1, '#020203');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, width, height);
-  }
 
-  // 3. Overlay darkness / vignette
-  if (config.background.overlayOpacity > 0) {
-    ctx.fillStyle = `rgba(0, 0, 0, ${config.background.overlayOpacity})`;
-    ctx.fillRect(0, 0, width, height);
+    if (config.background.overlayOpacity > 0) {
+      ctx.fillStyle = `rgba(0, 0, 0, ${config.background.overlayOpacity})`;
+      ctx.fillRect(0, 0, width, height);
+    }
   }
 
   // 4. Calculate Scroll Y
@@ -311,47 +409,63 @@ export function renderCreditsFrame(
   // 5. Draw text
   ctx.save();
 
-  // Handle star crawl perspective if selected
   if (config.direction === 'star-crawl') {
-    // Pseudo 3D perspective via transforms and clipping
     ctx.setTransform(1, 0, 0, 0.45, 0, height * 0.25);
   }
 
   let yCursor = currentY;
   const paddingX = width * 0.08;
-  const contentWidth = width - paddingX * 2;
 
-  // Text shadow setup
-  if (config.textShadow) {
+  const useFastOffsetShadow = Boolean(config.textShadow && options?.fastShadow);
+  const shadowOffsetY = Math.max(1, Math.round(2 * scale));
+
+  if (config.textShadow && !useFastOffsetShadow) {
     ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
     ctx.shadowBlur = Math.round(8 * scale);
     ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = Math.round(2 * scale);
+    ctx.shadowOffsetY = shadowOffsetY;
   } else {
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
   }
 
+  const canCullVertically = config.direction !== 'star-crawl';
+  const cullTop = -baseFontSize * 2.5;
+  const cullBottom = height + baseFontSize * 2.5;
+
+  const drawTextWithOptionalFastShadow = (text: string, x: number, y: number, fillStyle: string) => {
+    if (useFastOffsetShadow) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.78)';
+      ctx.fillText(text, x, y + shadowOffsetY);
+    }
+    ctx.fillStyle = fillStyle;
+    ctx.fillText(text, x, y);
+  };
+
   for (const line of parsedLines) {
+    const lineH = getLineHeight(line, baseFontSize, config.lineSpacing);
+
     if (line.type === 'blank') {
-      yCursor += baseFontSize * 1.0;
+      yCursor += lineH;
+      continue;
+    }
+
+    // Skip off-screen text rasterization for fast multi-hundred-line renders
+    if (canCullVertically && (yCursor + lineH < cullTop || yCursor - lineH > cullBottom)) {
+      yCursor += lineH;
       continue;
     }
 
     if (line.type === 'title') {
       const titleSize = Math.round(baseFontSize * 1.4);
       ctx.font = getCanvasFont(700, titleSize, config.fontFamily);
-      ctx.fillStyle = config.color;
       ctx.textAlign = 'center';
-
-      // Draw title line
-      ctx.fillText(line.title || '', width / 2, yCursor);
-      yCursor += titleSize * config.lineSpacing + baseFontSize * 0.5;
+      drawTextWithOptionalFastShadow(line.title || '', width / 2, yCursor, config.color);
+      yCursor += lineH;
       continue;
     }
 
     if (line.type === 'role-pair' && config.roleSeparation) {
-      // Two-column layout: ROLE on left aligned right, NAME on right aligned left
       const roleSize = Math.round(baseFontSize * 0.95);
       const nameSize = Math.round(baseFontSize * 1.05);
 
@@ -359,26 +473,20 @@ export function renderCreditsFrame(
       const leftColX = width / 2 - colGap / 2;
       const rightColX = width / 2 + colGap / 2;
 
-      // Role
       ctx.font = getCanvasFont(500, roleSize, config.fontFamily);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
       ctx.textAlign = 'right';
-      ctx.fillText(line.role || '', leftColX, yCursor);
+      drawTextWithOptionalFastShadow(line.role || '', leftColX, yCursor, 'rgba(255, 255, 255, 0.7)');
 
-      // Name
       ctx.font = getCanvasFont(700, nameSize, config.fontFamily);
-      ctx.fillStyle = config.color;
       ctx.textAlign = 'left';
-      ctx.fillText(line.name || '', rightColX, yCursor);
+      drawTextWithOptionalFastShadow(line.name || '', rightColX, yCursor, config.color);
 
-      yCursor += baseFontSize * config.lineSpacing;
+      yCursor += lineH;
       continue;
     }
 
-    // Regular line or unseparated role pair
     const textToDraw = line.type === 'role-pair' ? `${line.role} : ${line.name}` : (line.text || '');
     ctx.font = getCanvasFont(600, baseFontSize, config.fontFamily);
-    ctx.fillStyle = config.color;
 
     let textX = width / 2;
     if (config.alignment === 'left') {
@@ -391,8 +499,8 @@ export function renderCreditsFrame(
       ctx.textAlign = 'center';
     }
 
-    ctx.fillText(textToDraw, textX, yCursor);
-    yCursor += baseFontSize * config.lineSpacing;
+    drawTextWithOptionalFastShadow(textToDraw, textX, yCursor, config.color);
+    yCursor += lineH;
   }
 
   ctx.restore();

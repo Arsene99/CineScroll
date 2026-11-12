@@ -1,15 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Share2, Film, CheckCircle2, X, RotateCcw, Check, Sparkles } from 'lucide-react';
+import { Download, Share2, Film, CheckCircle2, X, RotateCcw, Check, Zap } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CreditsConfig } from '../../types';
 import {
   parseCreditsText,
   renderCreditsFrame,
+  createStaticBackgroundCache,
   getResolutionDimensions,
+  estimateExportSizeMB,
+  formatFileSize,
   ExportResolution,
   ExportFormat,
+  ExportQuality,
 } from '../../utils/creditsEngine';
 import { globalAudioEngine } from '../../utils/audioSynth';
+import { exportVideo } from '../../utils/videoExporter';
 
 interface ExportModalProps {
   config: CreditsConfig;
@@ -25,15 +30,19 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   videoElement,
 }) => {
   const [selectedFormat, setSelectedFormat] = useState<ExportFormat>('mp4');
-  const [selectedResolution, setSelectedResolution] = useState<ExportResolution>('1080p');
+  const [selectedResolution, setSelectedResolution] = useState<ExportResolution>('720p');
+  const [selectedQuality, setSelectedQuality] = useState<ExportQuality>('balanced');
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [statusLabel, setStatusLabel] = useState('Initialisation...');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [actualFormat, setActualFormat] = useState<string>('mp4');
+  const [actualSizeBytes, setActualSizeBytes] = useState<number>(0);
+  const [renderTimeMs, setRenderTimeMs] = useState<number>(0);
+  const [exportError, setExportError] = useState<string | null>(null);
 
-  const isCancelledRef = useRef(false);
-  const recorderRef = useRef<MediaRecorder | null>(null);
+  const exportSignalRef = useRef<{ cancelled: boolean }>({ cancelled: false });
 
   // Clean up object URL when component unmounts or before a new one is set
   useEffect(() => {
@@ -45,11 +54,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   }, [downloadUrl]);
 
   const handleClose = () => {
-    isCancelledRef.current = true;
+    exportSignalRef.current.cancelled = true;
     if (isExporting) {
-      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-        try { recorderRef.current.stop(); } catch {}
-      }
       globalAudioEngine.stop();
       setIsExporting(false);
     }
@@ -62,193 +68,115 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
   if (!isOpen) return null;
 
-  const currentDims = getResolutionDimensions(config.aspectRatio, selectedResolution);
+  const hasMotionBackground = config.background.source === 'video';
+  const hasActiveAudio = Boolean(
+    !config.audio.muted && config.audio.presetId !== 'none' && config.audio.volume > 0
+  );
+  const currentDims = getResolutionDimensions(
+    config.aspectRatio,
+    selectedResolution,
+    selectedQuality,
+    hasMotionBackground
+  );
+  const estimatedSizeMB = estimateExportSizeMB(
+    config.speedDuration,
+    currentDims.bitrate,
+    hasActiveAudio
+  );
 
   const startExport = async () => {
     setIsExporting(true);
-    setProgress(0);
+    setProgress(1);
     setElapsedSeconds(0);
+    setStatusLabel('Initialisation...');
     setDownloadUrl(null);
-    isCancelledRef.current = false;
+    setExportError(null);
+    setActualSizeBytes(0);
+    setRenderTimeMs(0);
 
-    // Create offscreen rendering canvas at requested resolution with guaranteed even pixel dimensions
-    const exportCanvas = document.createElement('canvas');
-    const { width, height, bitrate } = getResolutionDimensions(config.aspectRatio, selectedResolution);
-    exportCanvas.width = width;
-    exportCanvas.height = height;
-    const ctx = exportCanvas.getContext('2d');
-    if (!ctx) {
-      setIsExporting(false);
-      return;
-    }
+    const signal = { cancelled: false };
+    exportSignalRef.current = signal;
 
-    const parsedLines = parseCreditsText(config.text);
-
-    // Capture video stream from canvas
-    const canvasStream = exportCanvas.captureStream ? exportCanvas.captureStream(30) : (exportCanvas as any).mozCaptureStream(30);
-    const videoTrack = canvasStream.getVideoTracks()[0];
-
-    // Add audio track if audio is active
-    const audioDestination = globalAudioEngine.getAudioStreamDestination();
-    if (audioDestination && !config.audio.muted && config.audio.presetId !== 'none') {
-      const audioTracks = audioDestination.stream.getAudioTracks();
-      if (audioTracks.length > 0) {
-        canvasStream.addTrack(audioTracks[0]);
-      }
-    }
-
-    // Negotiate supported mime type based on user format choice
-    let chosenMime = '';
-    let ext = 'mp4';
-
-    if (selectedFormat === 'mp4') {
-      const mp4Candidates = [
-        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-        'video/mp4;codecs=avc1',
-        'video/mp4',
-      ];
-      for (const cand of mp4Candidates) {
-        if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(cand)) {
-          chosenMime = cand;
-          ext = 'mp4';
-          break;
-        }
-      }
-      // If browser doesn't support mp4 encoding natively, fall back to webm
-      if (!chosenMime) {
-        chosenMime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-          ? 'video/webm;codecs=vp9'
-          : 'video/webm';
-        ext = 'webm';
-      }
-    } else {
-      const webmCandidates = [
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp9',
-        'video/webm',
-      ];
-      for (const cand of webmCandidates) {
-        if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(cand)) {
-          chosenMime = cand;
-          ext = 'webm';
-          break;
-        }
-      }
-      if (!chosenMime) {
-        chosenMime = 'video/mp4';
-        ext = 'mp4';
-      }
-    }
-
-    setActualFormat(ext);
-
-    const recordedChunks: Blob[] = [];
-    let recorder: MediaRecorder;
     try {
-      recorder = new MediaRecorder(canvasStream, {
-        mimeType: chosenMime || undefined,
-        videoBitsPerSecond: bitrate,
-      });
-    } catch {
-      recorder = new MediaRecorder(canvasStream, {
-        videoBitsPerSecond: bitrate,
-      });
-    }
-    recorderRef.current = recorder;
+      const parsedLines = parseCreditsText(config.text);
 
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) {
-        recordedChunks.push(e.data);
+      // Load background image if used
+      let bgImage: HTMLImageElement | null = null;
+      if (config.background.source === 'image' && config.background.value) {
+        bgImage = new Image();
+        bgImage.crossOrigin = 'anonymous';
+        bgImage.src = config.background.value;
+        if (!bgImage.complete) {
+          await new Promise((res) => {
+            const timeout = window.setTimeout(res, 4000);
+            bgImage!.onload = () => {
+              window.clearTimeout(timeout);
+              res(null);
+            };
+            bgImage!.onerror = () => {
+              window.clearTimeout(timeout);
+              res(null);
+            };
+          });
+        }
       }
-    };
 
-    recorder.onstop = () => {
-      const blob = new Blob(recordedChunks, { type: recorder.mimeType || (ext === 'mp4' ? 'video/mp4' : 'video/webm') });
-      const url = URL.createObjectURL(blob);
+      const cachedBackground = createStaticBackgroundCache(
+        currentDims.width,
+        currentDims.height,
+        config,
+        bgImage
+      );
+
+      const result = await exportVideo({
+        width: currentDims.width,
+        height: currentDims.height,
+        fps: selectedQuality === 'compact' ? 24 : 30,
+        durationSec: config.speedDuration,
+        bitrate: currentDims.bitrate,
+        format: selectedFormat,
+        audio: config.audio,
+        bgImage,
+        bgVideo: config.background.source === 'video' ? videoElement : null,
+        signal,
+        drawFrame: (ctx, timeSec) => {
+          renderCreditsFrame(ctx, config, timeSec, parsedLines, bgImage || videoElement, {
+            cachedBackground,
+            fastShadow: true,
+          });
+        },
+        onProgress: (pct, renderedSec, statusText) => {
+          if (!signal.cancelled) {
+            setProgress(pct);
+            setElapsedSeconds(renderedSec);
+            if (statusText) setStatusLabel(statusText);
+          }
+        },
+      });
+
+      if (signal.cancelled) return;
+
+      const url = URL.createObjectURL(result.blob);
+      setActualFormat(result.format);
+      setActualSizeBytes(result.blob.size);
+      setRenderTimeMs(result.renderDurationMs);
       setDownloadUrl(url);
       setIsExporting(false);
       setProgress(100);
       setElapsedSeconds(config.speedDuration);
 
-      // Trigger celebration
       confetti({
         particleCount: 80,
         spread: 60,
         origin: { y: 0.6 },
       });
-    };
-
-    // Load background image if used
-    let bgImage: HTMLImageElement | null = null;
-    if (config.background.source === 'image' && config.background.value) {
-      bgImage = new Image();
-      bgImage.crossOrigin = 'anonymous';
-      bgImage.src = config.background.value;
-      await new Promise((res) => {
-        bgImage!.onload = res;
-        bgImage!.onerror = res;
-      });
-    }
-
-    // Start recorder with clean 1-second segment intervals (avoiding corrupt microscopic fragments)
-    recorder.start(1000);
-
-    // Start audio during rendering if enabled
-    if (!config.audio.muted && config.audio.presetId !== 'none') {
-      globalAudioEngine.play(0);
-    }
-
-    // Render frame sequence deterministically at exactly 30 frames per second
-    const duration = config.speedDuration;
-    const fps = 30;
-    const frameIntervalMs = 1000 / fps; // 33.33ms per frame
-    const totalFrames = Math.max(1, Math.round(duration * fps));
-    const loopStartTime = performance.now();
-
-    let frameIdx = 0;
-
-    while (frameIdx <= totalFrames && !isCancelledRef.current) {
-      const frameTime = Math.min(duration, frameIdx / fps);
-      renderCreditsFrame(ctx, config, frameTime, parsedLines, bgImage || videoElement);
-
-      if (videoTrack && typeof (videoTrack as any).requestFrame === 'function') {
-        try {
-          (videoTrack as any).requestFrame();
-        } catch {}
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError' || signal.cancelled) {
+        return;
       }
-
-      const pct = Math.min(99, Math.round((frameIdx / totalFrames) * 100));
-      setProgress(pct);
-      setElapsedSeconds(Math.floor(frameTime));
-      frameIdx++;
-
-      // Real-time synchronization pacing to match MediaRecorder capture rate
-      const nextTargetTime = loopStartTime + frameIdx * frameIntervalMs;
-      const waitMs = Math.max(0, nextTargetTime - performance.now());
-      if (waitMs > 0) {
-        await new Promise((r) => setTimeout(r, waitMs));
-      } else {
-        await new Promise((r) => setTimeout(r, 0));
-      }
+      setExportError('Erreur lors de la génération vidéo. Essayez un autre format ou qualité.');
+      setIsExporting(false);
     }
-
-    if (isCancelledRef.current) return;
-
-    // Draw exact final frame and request final track frame
-    renderCreditsFrame(ctx, config, duration, parsedLines, bgImage || videoElement);
-    if (videoTrack && typeof (videoTrack as any).requestFrame === 'function') {
-      try { (videoTrack as any).requestFrame(); } catch {}
-    }
-    setProgress(100);
-    setElapsedSeconds(Math.round(duration));
-
-    // Allow recorder to consume remaining frames before closing
-    await new Promise((r) => setTimeout(r, 200));
-
-    if (recorder.state !== 'inactive') {
-      try { recorder.stop(); } catch {}
-    }
-    globalAudioEngine.stop();
   };
 
   const handleShare = async () => {
@@ -282,7 +210,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 Génération de la Vidéo
               </h3>
               <p className="text-[11px] text-neutral-400 font-mono">
-                {config.aspectRatio} • {config.speedDuration}s • {currentDims.label}
+                {config.aspectRatio} • {config.speedDuration}s • ~{estimatedSizeMB} Mo
               </p>
             </div>
           </div>
@@ -295,9 +223,16 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           </button>
         </div>
 
+        {/* Error banner */}
+        {exportError && (
+          <div className="p-2.5 rounded-xl bg-red-500/15 border border-red-500/40 text-red-300 text-xs">
+            {exportError}
+          </div>
+        )}
+
         {/* Center state or options */}
         {!isExporting && !downloadUrl ? (
-          <div className="space-y-4 pt-1">
+          <div className="space-y-3.5 pt-1">
             {/* Format Selector */}
             <div className="space-y-1.5">
               <span className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider block">
@@ -357,9 +292,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               </span>
               <div className="grid grid-cols-3 gap-1.5">
                 {(['720p', '1080p', '4k'] as ExportResolution[]).map((res) => {
-                  const dims = getResolutionDimensions(config.aspectRatio, res);
+                  const dims = getResolutionDimensions(
+                    config.aspectRatio,
+                    res,
+                    selectedQuality,
+                    hasMotionBackground
+                  );
                   const isSelected = selectedResolution === res;
-                  const label = res === '720p' ? '720p HD' : res === '1080p' ? '1080p Full HD' : '4K Ultra HD';
                   const desc = res === '720p' ? 'Léger' : res === '1080p' ? 'Optimal' : 'Cinéma';
 
                   return (
@@ -386,6 +325,53 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                       </span>
                       <span className="text-[9px] text-neutral-500 font-medium mt-0.5">
                         {desc}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Quality / File Size Selector */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
+                  Compression & poids
+                </span>
+                <span className="text-[10px] font-mono text-amber-400">
+                  Estimé : ~{estimatedSizeMB} Mo
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(
+                  [
+                    { id: 'compact', title: 'Compact', sub: 'Ultra léger' },
+                    { id: 'balanced', title: 'Équilibré', sub: 'Net & léger' },
+                    { id: 'high', title: 'Haute', sub: 'Max détails' },
+                  ] as const
+                ).map((q) => {
+                  const isSelected = selectedQuality === q.id;
+                  return (
+                    <button
+                      key={q.id}
+                      type="button"
+                      onClick={() => setSelectedQuality(q.id)}
+                      className={`p-2 rounded-xl border text-left transition-all ${
+                        isSelected
+                          ? 'bg-amber-500/15 border-amber-500 text-amber-300 shadow-sm'
+                          : 'bg-neutral-800/60 border-neutral-700/60 text-neutral-300 hover:bg-neutral-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-[11px] font-bold">{q.title}</span>
+                        {isSelected && (
+                          <span className="w-3.5 h-3.5 rounded-full bg-amber-500 text-neutral-950 flex items-center justify-center">
+                            <Check className="w-2 h-2 stroke-[3]" />
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[9px] text-neutral-500 block leading-tight">
+                        {q.sub}
                       </span>
                     </button>
                   );
@@ -423,10 +409,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             </div>
             <div className="flex flex-col items-center text-center">
               <span className="text-xs text-neutral-200 font-mono font-medium">
-                {elapsedSeconds}s / {config.speedDuration}s
+                {elapsedSeconds}s / {config.speedDuration}s • {statusLabel}
               </span>
-              <span className="text-[11px] text-neutral-400 font-medium">
-                Rendu {selectedResolution.toUpperCase()} en {selectedFormat.toUpperCase()} ({currentDims.width}×{currentDims.height})
+              <span className="text-[11px] text-amber-400/90 font-medium flex items-center gap-1 mt-0.5">
+                <Zap className="w-3 h-3" />
+                <span>Encodage rapide • {selectedResolution.toUpperCase()} {selectedFormat.toUpperCase()}</span>
               </span>
             </div>
           </div>
@@ -439,8 +426,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               Vidéo prête !
             </span>
             <span className="text-xs text-neutral-400 text-center font-mono">
-              {currentDims.width}×{currentDims.height} • {actualFormat.toUpperCase()} • 30 FPS
+              {currentDims.width}×{currentDims.height} • {actualFormat.toUpperCase()} • {formatFileSize(actualSizeBytes)}
             </span>
+            {renderTimeMs > 0 && (
+              <span className="text-[11px] text-emerald-400 font-medium">
+                Généré en {(renderTimeMs / 1000).toFixed(1)}s
+              </span>
+            )}
           </div>
         ) : null}
 
@@ -454,7 +446,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               className="w-full py-3.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:bg-neutral-800 disabled:text-neutral-500 text-neutral-950 font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-amber-500/20 active:scale-98"
             >
               <Download className="w-4 h-4" />
-              <span>{isExporting ? 'Encodage en cours...' : `Démarrer le rendu (${selectedResolution.toUpperCase()} • ${selectedFormat.toUpperCase()})`}</span>
+              <span>
+                {isExporting
+                  ? 'Encodage rapide...'
+                  : `Démarrer le rendu (${selectedResolution.toUpperCase()} • ${selectedFormat.toUpperCase()})`}
+              </span>
             </button>
           ) : (
             <div className="space-y-2">
