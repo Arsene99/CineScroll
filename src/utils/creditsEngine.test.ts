@@ -126,19 +126,24 @@ test('getCanvasFont produces valid font strings with fallbacks', () => {
   assert.match(montserrat, /bold 18px "Montserrat", "Segoe UI"/);
 });
 
-test('getResolutionDimensions and estimateExportSizeMB keep 720p text exports compact', () => {
-  const compact720 = getResolutionDimensions('9:16', '720p', 'compact', false);
-  const balanced720 = getResolutionDimensions('9:16', '720p', 'balanced', false);
-  const high720 = getResolutionDimensions('9:16', '720p', 'high', false);
+test('getResolutionDimensions and estimateExportSizeMB scale with FPS and keep 720p exports compact', () => {
+  const compact720 = getResolutionDimensions('9:16', '720p', 'compact', false, 24);
+  const balanced720 = getResolutionDimensions('9:16', '720p', 'balanced', false, 24);
+  const high720 = getResolutionDimensions('9:16', '720p', 'high', false, 24);
 
   assert.ok(compact720.bitrate < balanced720.bitrate);
   assert.ok(balanced720.bitrate < high720.bitrate);
 
-  // 25s 720p balanced text-only export should estimate well under 3 MB (vs 17 MB previously)
-  const estBalanced = estimateExportSizeMB(25, balanced720.bitrate, false);
-  const estCompact = estimateExportSizeMB(25, compact720.bitrate, false);
-  assert.ok(estCompact <= 1.5, `Expected compact <= 1.5 MB, got ${estCompact}`);
-  assert.ok(estBalanced <= 2.5, `Expected balanced <= 2.5 MB, got ${estBalanced}`);
+  const fps15 = getResolutionDimensions('9:16', '720p', 'balanced', false, 15);
+  const fps60 = getResolutionDimensions('9:16', '720p', 'balanced', false, 60);
+  assert.ok(fps15.bitrate < balanced720.bitrate);
+  assert.ok(balanced720.bitrate < fps60.bitrate);
+
+  // 2-minute (120s) 720p 24fps Compact text export should estimate compactly (~3-4.5 Mo)
+  const est120Compact = estimateExportSizeMB(120, compact720.bitrate, true, compact720.audioBitrate);
+  const est120Balanced = estimateExportSizeMB(120, balanced720.bitrate, true, balanced720.audioBitrate);
+  assert.ok(est120Compact <= 4.5, `Expected 120s compact <= 4.5 MB, got ${est120Compact}`);
+  assert.ok(est120Balanced <= 6.8, `Expected 120s balanced <= 6.8 MB, got ${est120Balanced}`);
 });
 
 test('formatFileSize formats bytes cleanly in Ko and Mo', () => {

@@ -181,73 +181,77 @@ export function formatTime(seconds: number, includeSubseconds = false): string {
 export type ExportResolution = '720p' | '1080p' | '4k';
 export type ExportFormat = 'mp4' | 'webm';
 export type ExportQuality = 'compact' | 'balanced' | 'high';
+export type ExportFps = 15 | 24 | 30 | 60;
 
 /**
- * Calculates standard video pixel dimensions and optimized bitrates for export.
+ * Calculates standard video pixel dimensions and calibrated bitrates for export.
  * Guarantees even dimensions required by video encoders (H.264 / VP9).
  */
 export function getResolutionDimensions(
   aspectRatio: '9:16' | '16:9' | '1:1',
   resolution: ExportResolution,
   quality: ExportQuality = 'balanced',
-  hasMotionBackground = false
-): { width: number; height: number; bitrate: number; label: string } {
-  const qualityMultiplier = quality === 'compact' ? 0.55 : quality === 'high' ? 1.9 : 1.0;
-  const motionMultiplier = hasMotionBackground ? 1.45 : 1.0;
+  hasMotionBackground = false,
+  fps: ExportFps = 24
+): { width: number; height: number; bitrate: number; audioBitrate: number; label: string } {
+  const qualityMultiplier = quality === 'compact' ? 0.58 : quality === 'high' ? 1.85 : 1.0;
+  const motionMultiplier = hasMotionBackground ? 1.55 : 1.0;
+  const fpsMultiplier =
+    fps <= 15 ? 0.72 : fps <= 24 ? 0.9 : fps <= 30 ? 1.0 : 1.45;
+  const audioBitrate = quality === 'high' ? 96_000 : 64_000;
 
   let width = 1080;
   let height = 1920;
-  let baseTextBitrate = 1_400_000;
+  let baseTextBitrate = 720_000;
   let label = '1080×1920 (Full HD)';
 
   if (resolution === '720p') {
-    baseTextBitrate = 780_000;
+    baseTextBitrate = 380_000;
     if (aspectRatio === '9:16') {
       width = 720; height = 1280; label = '720×1280 (HD)';
     } else if (aspectRatio === '16:9') {
       width = 1280; height = 720; label = '1280×720 (HD)';
     } else {
-      width = 720; height = 720; baseTextBitrate = 680_000; label = '720×720 (HD Carré)';
+      width = 720; height = 720; baseTextBitrate = 330_000; label = '720×720 (HD Carré)';
     }
   } else if (resolution === '4k') {
-    baseTextBitrate = 4_000_000;
+    baseTextBitrate = 2_200_000;
     if (aspectRatio === '9:16') {
       width = 2160; height = 3840; label = '2160×3840 (4K UHD)';
     } else if (aspectRatio === '16:9') {
       width = 3840; height = 2160; label = '3840×2160 (4K UHD)';
     } else {
-      width = 2160; height = 2160; baseTextBitrate = 3_400_000; label = '2160×2160 (4K Carré)';
+      width = 2160; height = 2160; baseTextBitrate = 1_850_000; label = '2160×2160 (4K Carré)';
     }
   } else {
-    baseTextBitrate = 1_400_000;
+    baseTextBitrate = 720_000;
     if (aspectRatio === '9:16') {
       width = 1080; height = 1920; label = '1080×1920 (Full HD)';
     } else if (aspectRatio === '16:9') {
       width = 1920; height = 1080; label = '1920×1080 (Full HD)';
     } else {
-      width = 1080; height = 1080; baseTextBitrate = 1_200_000; label = '1080×1080 (Full HD Carré)';
+      width = 1080; height = 1080; baseTextBitrate = 620_000; label = '1080×1080 (Full HD Carré)';
     }
   }
 
-  const bitrate = Math.round(baseTextBitrate * qualityMultiplier * motionMultiplier);
-  return { width, height, bitrate, label };
+  const bitrate = Math.round(baseTextBitrate * qualityMultiplier * motionMultiplier * fpsMultiplier);
+  return { width, height, bitrate, audioBitrate, label };
 }
 
 /**
- * Estimates exported file size in MB assuming variable bitrate compression for text scrolls.
+ * Estimates exported file size in MB based on target video + audio bitrates and MP4/WebM container overhead (~3%).
+ * Avoids optimistic under-estimation so final file sizes stay at or below the previewed estimate.
  */
 export function estimateExportSizeMB(
   durationSeconds: number,
   videoBitrateBps: number,
   hasAudio: boolean,
-  audioBitrateBps = 96_000
+  audioBitrateBps = 64_000
 ): number {
   if (durationSeconds <= 0) return 0;
-  // Variable bitrate (VBR) scrolling text typically averages ~70% of target bitrate ceiling
-  const effectiveVideoBps = videoBitrateBps * 0.7;
-  const totalBps = effectiveVideoBps + (hasAudio ? audioBitrateBps : 0);
-  const bytes = (totalBps * durationSeconds) / 8;
-  return Math.max(0.1, Number((bytes / (1024 * 1024)).toFixed(1)));
+  const totalBps = videoBitrateBps + (hasAudio ? audioBitrateBps : 0);
+  const bytesWithMuxOverhead = ((totalBps * durationSeconds) / 8) * 1.03;
+  return Math.max(0.1, Number((bytesWithMuxOverhead / (1024 * 1024)).toFixed(1)));
 }
 
 /**

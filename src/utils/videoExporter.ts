@@ -10,6 +10,7 @@ export interface ExportVideoOptions {
   fps?: number;
   durationSec: number;
   bitrate: number;
+  audioBitrate?: number;
   format: ExportFormat;
   audio?: AudioConfig;
   bgImage?: HTMLImageElement | null;
@@ -79,13 +80,13 @@ async function pickWebCodecsVideoConfig(
   }
 
   const pixelCount = width * height;
-  // Constrained Baseline profiles first so mobile hardware/software encoders emit chunks immediately without B-frame lookahead stalls
+  // Main Profile (CABAC) first for ~25-35% tighter compression than Baseline CAVLC, while realtime mode prevents B-frame stalls
   const avcCandidates =
     pixelCount > 1920 * 1080
-      ? ['avc1.420033', 'avc1.640033', 'avc1.4d0033', 'avc1.640034']
+      ? ['avc1.4d0033', 'avc1.640033', 'avc1.420033', 'avc1.640034']
       : pixelCount > 1280 * 720
-        ? ['avc1.42002a', 'avc1.4d002a', 'avc1.64002a', 'avc1.42001f']
-        : ['avc1.42001f', 'avc1.42E01E', 'avc1.4d001f', 'avc1.64001f'];
+        ? ['avc1.4d002a', 'avc1.42002a', 'avc1.64002a', 'avc1.4d001f']
+        : ['avc1.4d001f', 'avc1.42001f', 'avc1.42E01E', 'avc1.64001f'];
 
   const candidates =
     format === 'mp4'
@@ -98,28 +99,30 @@ async function pickWebCodecsVideoConfig(
   const hwMode: HardwareAcceleration = forceSoftware ? 'prefer-software' : 'no-preference';
 
   for (const item of candidates) {
-    // Use latencyMode: 'realtime' so MediaCodec/VideoToolbox never stalls waiting for multi-second lookahead buffers
-    const realtimeVbrConfig: VideoEncoderConfig = {
-      codec: item.codec,
-      width,
-      height,
-      bitrate,
-      framerate: fps,
-      bitrateMode: 'variable',
-      latencyMode: 'realtime',
-      hardwareAcceleration: hwMode,
-    };
-    try {
-      const support = await VideoEncoder.isConfigSupported(realtimeVbrConfig);
-      if (support.supported && support.config) {
-        return {
-          encoderConfig: support.config,
-          muxerCodec: item.muxerCodec,
-          targetFormat: item.fmt,
-        };
+    // Try CBR ('constant') first so mobile MediaCodec/VideoToolbox encoders strictly obey target bitrate instead of overshooting 2x
+    for (const mode of ['constant', 'variable'] as BitrateMode[]) {
+      const realtimeConfig: VideoEncoderConfig = {
+        codec: item.codec,
+        width,
+        height,
+        bitrate,
+        framerate: fps,
+        bitrateMode: mode,
+        latencyMode: 'realtime',
+        hardwareAcceleration: hwMode,
+      };
+      try {
+        const support = await VideoEncoder.isConfigSupported(realtimeConfig);
+        if (support.supported && support.config) {
+          return {
+            encoderConfig: support.config,
+            muxerCodec: item.muxerCodec,
+            targetFormat: item.fmt,
+          };
+        }
+      } catch {
+        // Try next bitrateMode / basic config
       }
-    } catch {
-      // Try basic config below
     }
 
     const basicConfig: VideoEncoderConfig = {
@@ -149,7 +152,8 @@ async function pickWebCodecsVideoConfig(
 
 async function pickWebCodecsAudioConfig(
   format: ExportFormat,
-  sampleRate: number
+  sampleRate: number,
+  audioBitrate = 64_000
 ): Promise<{
   encoderConfig: AudioEncoderConfig;
   mp4Codec: 'aac' | 'opus';
@@ -172,7 +176,7 @@ async function pickWebCodecsAudioConfig(
       codec: item.codec,
       sampleRate,
       numberOfChannels: 2,
-      bitrate: 96_000,
+      bitrate: audioBitrate,
     };
     try {
       const support = await AudioEncoder.isConfigSupported(cfg);
@@ -543,6 +547,7 @@ async function exportWithMediaRecorder(
     recorder = new MediaRecorder(canvasStream, {
       mimeType: chosenMime || undefined,
       videoBitsPerSecond: options.bitrate,
+      audioBitsPerSecond: options.audioBitrate ?? 64_000,
     });
   } catch {
     recorder = new MediaRecorder(canvasStream, {
@@ -645,7 +650,11 @@ export async function exportVideo(options: ExportVideoOptions): Promise<ExportVi
   if (wantsAudio && options.audio) {
     options.onProgress(3, 0, 'Préparation audio...');
     const sampleRate = 48000;
-    audioSelection = await pickWebCodecsAudioConfig(options.format, sampleRate);
+    audioSelection = await pickWebCodecsAudioConfig(
+      options.format,
+      sampleRate,
+      options.audioBitrate ?? 64_000
+    );
     if (audioSelection) {
       preparedAudio = await prepareOfflineAudio(options.audio, options.durationSec, sampleRate);
       if (!preparedAudio) {

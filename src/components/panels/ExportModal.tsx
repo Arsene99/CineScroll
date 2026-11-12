@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Share2, Film, CheckCircle2, X, RotateCcw, Check, Zap } from 'lucide-react';
+import { Download, Share2, Film, CheckCircle2, X, RotateCcw, Check, Zap, ChevronDown } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CreditsConfig } from '../../types';
 import {
@@ -12,6 +12,7 @@ import {
   ExportResolution,
   ExportFormat,
   ExportQuality,
+  ExportFps,
 } from '../../utils/creditsEngine';
 import { globalAudioEngine } from '../../utils/audioSynth';
 import { exportVideo } from '../../utils/videoExporter';
@@ -32,6 +33,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [selectedFormat, setSelectedFormat] = useState<ExportFormat>('mp4');
   const [selectedResolution, setSelectedResolution] = useState<ExportResolution>('720p');
   const [selectedQuality, setSelectedQuality] = useState<ExportQuality>('balanced');
+  const [selectedFps, setSelectedFps] = useState<ExportFps>(24);
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -76,12 +78,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     config.aspectRatio,
     selectedResolution,
     selectedQuality,
-    hasMotionBackground
+    hasMotionBackground,
+    selectedFps
   );
   const estimatedSizeMB = estimateExportSizeMB(
     config.speedDuration,
     currentDims.bitrate,
-    hasActiveAudio
+    hasActiveAudio,
+    currentDims.audioBitrate
   );
 
   const startExport = async () => {
@@ -131,9 +135,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       const result = await exportVideo({
         width: currentDims.width,
         height: currentDims.height,
-        fps: selectedQuality === 'compact' ? 24 : 30,
+        fps: selectedFps,
         durationSec: config.speedDuration,
         bitrate: currentDims.bitrate,
+        audioBitrate: currentDims.audioBitrate,
         format: selectedFormat,
         audio: config.audio,
         bgImage,
@@ -210,7 +215,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 Génération de la Vidéo
               </h3>
               <p className="text-[11px] text-neutral-400 font-mono">
-                {config.aspectRatio} • {config.speedDuration}s • ~{estimatedSizeMB} Mo
+                {config.aspectRatio} • {config.speedDuration}s • {selectedFps} i/s • ~{estimatedSizeMB} Mo
               </p>
             </div>
           </div>
@@ -296,7 +301,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     config.aspectRatio,
                     res,
                     selectedQuality,
-                    hasMotionBackground
+                    hasMotionBackground,
+                    selectedFps
                   );
                   const isSelected = selectedResolution === res;
                   const desc = res === '720p' ? 'Léger' : res === '1080p' ? 'Optimal' : 'Cinéma';
@@ -378,6 +384,36 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 })}
               </div>
             </div>
+
+            {/* FPS Selector Dropdown */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label
+                  htmlFor="export-fps-select"
+                  className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider"
+                >
+                  Images par seconde (FPS)
+                </label>
+                <span className="text-[10px] font-mono text-neutral-400">
+                  {selectedFps} i/s
+                </span>
+              </div>
+              <div className="relative">
+                <select
+                  id="export-fps-select"
+                  aria-label="Images par seconde (FPS)"
+                  value={selectedFps}
+                  onChange={(e) => setSelectedFps(Number(e.target.value) as ExportFps)}
+                  className="w-full appearance-none rounded-xl bg-neutral-800/80 border border-neutral-700/70 hover:border-neutral-600 focus:border-amber-500 focus:outline-none px-3 py-2.5 pr-9 text-xs font-medium text-neutral-100 cursor-pointer transition-colors"
+                >
+                  <option value={15}>15 i/s — Ultra léger (défilement lent)</option>
+                  <option value={24}>24 i/s — Cinéma (recommandé)</option>
+                  <option value={30}>30 i/s — Standard fluide</option>
+                  <option value={60}>60 i/s — Très fluide (plus lourd)</option>
+                </select>
+                <ChevronDown className="w-4 h-4 text-neutral-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+              </div>
+            </div>
           </div>
         ) : null}
 
@@ -413,7 +449,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               </span>
               <span className="text-[11px] text-amber-400/90 font-medium flex items-center gap-1 mt-0.5">
                 <Zap className="w-3 h-3" />
-                <span>Encodage rapide • {selectedResolution.toUpperCase()} {selectedFormat.toUpperCase()}</span>
+                <span>Encodage rapide • {selectedResolution.toUpperCase()} {selectedFps} i/s {selectedFormat.toUpperCase()}</span>
               </span>
             </div>
           </div>
@@ -426,7 +462,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               Vidéo prête !
             </span>
             <span className="text-xs text-neutral-400 text-center font-mono">
-              {currentDims.width}×{currentDims.height} • {actualFormat.toUpperCase()} • {formatFileSize(actualSizeBytes)}
+              {currentDims.width}×{currentDims.height} • {selectedFps} i/s • {actualFormat.toUpperCase()} • {formatFileSize(actualSizeBytes)}
             </span>
             {renderTimeMs > 0 && (
               <span className="text-[11px] text-emerald-400 font-medium">
