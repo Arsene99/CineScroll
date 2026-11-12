@@ -128,15 +128,64 @@ export function formatTime(seconds: number, includeSubseconds = false): string {
 /**
  * Calculates canvas pixel dimensions for a given aspect ratio and display container size.
  */
+export type ExportResolution = '720p' | '1080p' | '4k';
+export type ExportFormat = 'mp4' | 'webm';
+
+/**
+ * Calculates standard video pixel dimensions and bitrates for export.
+ * Guarantees even dimensions required by video encoders (H.264 / VP9).
+ */
+export function getResolutionDimensions(
+  aspectRatio: '9:16' | '16:9' | '1:1',
+  resolution: ExportResolution
+): { width: number; height: number; bitrate: number; label: string } {
+  switch (resolution) {
+    case '720p':
+      if (aspectRatio === '9:16') {
+        return { width: 720, height: 1280, bitrate: 2_500_000, label: '720×1280 (HD)' };
+      }
+      if (aspectRatio === '16:9') {
+        return { width: 1280, height: 720, bitrate: 2_500_000, label: '1280×720 (HD)' };
+      }
+      return { width: 720, height: 720, bitrate: 2_000_000, label: '720×720 (HD Carré)' };
+
+    case '4k':
+      if (aspectRatio === '9:16') {
+        return { width: 2160, height: 3840, bitrate: 12_000_000, label: '2160×3840 (4K UHD)' };
+      }
+      if (aspectRatio === '16:9') {
+        return { width: 3840, height: 2160, bitrate: 12_000_000, label: '3840×2160 (4K UHD)' };
+      }
+      return { width: 2160, height: 2160, bitrate: 10_000_000, label: '2160×2160 (4K Carré)' };
+
+    case '1080p':
+    default:
+      if (aspectRatio === '9:16') {
+        return { width: 1080, height: 1920, bitrate: 5_000_000, label: '1080×1920 (Full HD)' };
+      }
+      if (aspectRatio === '16:9') {
+        return { width: 1920, height: 1080, bitrate: 5_000_000, label: '1920×1080 (Full HD)' };
+      }
+      return { width: 1080, height: 1080, bitrate: 4_000_000, label: '1080×1080 (Full HD Carré)' };
+  }
+}
+
+/**
+ * Calculates canvas pixel dimensions for a given aspect ratio and display container size.
+ */
 export function getCanvasDimensions(aspectRatio: '9:16' | '16:9' | '1:1', maxDimension = 1080): {
   width: number;
   height: number;
 } {
   switch (aspectRatio) {
-    case '9:16':
-      return { width: Math.round((maxDimension * 9) / 16), height: maxDimension };
-    case '16:9':
-      return { width: maxDimension, height: Math.round((maxDimension * 9) / 16) };
+    case '9:16': {
+      const rawW = Math.round((maxDimension * 9) / 16);
+      return { width: rawW % 2 === 0 ? rawW : rawW + 1, height: maxDimension };
+    }
+    case '16:9': {
+      const rawH = Math.round((maxDimension * 9) / 16);
+      return { width: maxDimension, height: rawH % 2 === 0 ? rawH : rawH + 1 };
+    }
     case '1:1':
     default:
       return { width: maxDimension, height: maxDimension };
@@ -155,9 +204,15 @@ export function renderCreditsFrame(
 ) {
   const { width, height } = ctx.canvas;
   const progress = config.speedDuration > 0 ? currentTime / config.speedDuration : 0;
+
+  // Scale typography proportionally to canvas width so layout is identical at any resolution
+  const refWidth = getCanvasDimensions(config.aspectRatio, 1080).width;
+  const scale = width / refWidth;
+  const baseFontSize = Math.max(10, Math.round(config.fontSize * scale));
+
   const totalContentHeight = measureCreditsContentHeight(
     parsedLines,
-    config.fontSize,
+    baseFontSize,
     config.lineSpacing
   );
 
@@ -209,7 +264,6 @@ export function renderCreditsFrame(
   // Handle star crawl perspective if selected
   if (config.direction === 'star-crawl') {
     // Pseudo 3D perspective via transforms and clipping
-    // Tilt angle
     ctx.setTransform(1, 0, 0, 0.45, 0, height * 0.25);
   }
 
@@ -220,9 +274,9 @@ export function renderCreditsFrame(
   // Text shadow setup
   if (config.textShadow) {
     ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-    ctx.shadowBlur = 8;
+    ctx.shadowBlur = Math.round(8 * scale);
     ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 2;
+    ctx.shadowOffsetY = Math.round(2 * scale);
   } else {
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
@@ -230,26 +284,26 @@ export function renderCreditsFrame(
 
   for (const line of parsedLines) {
     if (line.type === 'blank') {
-      yCursor += config.fontSize * 1.0;
+      yCursor += baseFontSize * 1.0;
       continue;
     }
 
     if (line.type === 'title') {
-      const titleSize = Math.round(config.fontSize * 1.4);
+      const titleSize = Math.round(baseFontSize * 1.4);
       ctx.font = `700 ${titleSize}px "${config.fontFamily}", sans-serif`;
       ctx.fillStyle = config.color;
       ctx.textAlign = 'center';
 
       // Draw title line
       ctx.fillText(line.title || '', width / 2, yCursor);
-      yCursor += titleSize * config.lineSpacing + config.fontSize * 0.5;
+      yCursor += titleSize * config.lineSpacing + baseFontSize * 0.5;
       continue;
     }
 
     if (line.type === 'role-pair' && config.roleSeparation) {
       // Two-column layout: ROLE on left aligned right, NAME on right aligned left
-      const roleSize = Math.round(config.fontSize * 0.95);
-      const nameSize = Math.round(config.fontSize * 1.05);
+      const roleSize = Math.round(baseFontSize * 0.95);
+      const nameSize = Math.round(baseFontSize * 1.05);
 
       const colGap = width * 0.05;
       const leftColX = width / 2 - colGap / 2;
@@ -267,13 +321,13 @@ export function renderCreditsFrame(
       ctx.textAlign = 'left';
       ctx.fillText(line.name || '', rightColX, yCursor);
 
-      yCursor += config.fontSize * config.lineSpacing;
+      yCursor += baseFontSize * config.lineSpacing;
       continue;
     }
 
     // Regular line or unseparated role pair
     const textToDraw = line.type === 'role-pair' ? `${line.role} : ${line.name}` : (line.text || '');
-    ctx.font = `600 ${config.fontSize}px "${config.fontFamily}", sans-serif`;
+    ctx.font = `600 ${baseFontSize}px "${config.fontFamily}", sans-serif`;
     ctx.fillStyle = config.color;
 
     let textX = width / 2;
@@ -288,7 +342,7 @@ export function renderCreditsFrame(
     }
 
     ctx.fillText(textToDraw, textX, yCursor);
-    yCursor += config.fontSize * config.lineSpacing;
+    yCursor += baseFontSize * config.lineSpacing;
   }
 
   ctx.restore();

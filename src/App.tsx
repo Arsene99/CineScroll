@@ -16,6 +16,30 @@ export default function App() {
     } else if (params.get('mode') === 'subtitles') {
       setMode('subtitles');
     }
+
+    // Force eager preloading of all font families so the PWA service worker caches all .woff2 files for offline use
+    if ('fonts' in document) {
+      const fontsToPreload = [
+        '600 24px "Cinzel"',
+        '800 24px "Cinzel"',
+        '500 24px "Montserrat"',
+        '700 24px "Montserrat"',
+        '900 24px "Montserrat"',
+        '400 24px "Bebas Neue"',
+        '600 24px "Playfair Display"',
+        '400 24px "Courier Prime"',
+        '700 24px "Courier Prime"',
+        '500 24px "Space Grotesk"',
+        '700 24px "Space Grotesk"',
+        '400 24px "Inter"',
+        '600 24px "Inter"',
+      ];
+      fontsToPreload.forEach((f) => {
+        try {
+          document.fonts.load(f).catch(() => {});
+        } catch {}
+      });
+    }
   }, []);
 
   return (
@@ -34,6 +58,25 @@ export default function App() {
 
       {/* Global PWA Offline indicator */}
       <OfflineIndicator />
+
+      {/* Hidden eager font DOM preloader: forces browser to fetch all woff2 files into service worker cache */}
+      <div
+        className="fixed -top-96 -left-96 opacity-0 pointer-events-none select-none text-[1px] -z-50"
+        aria-hidden="true"
+      >
+        <span style={{ fontFamily: 'Cinzel', fontWeight: 600 }}>C</span>
+        <span style={{ fontFamily: 'Cinzel', fontWeight: 800 }}>C</span>
+        <span style={{ fontFamily: 'Montserrat', fontWeight: 500 }}>M</span>
+        <span style={{ fontFamily: 'Montserrat', fontWeight: 700 }}>M</span>
+        <span style={{ fontFamily: 'Bebas Neue', fontWeight: 400 }}>B</span>
+        <span style={{ fontFamily: 'Playfair Display', fontWeight: 600 }}>P</span>
+        <span style={{ fontFamily: 'Courier Prime', fontWeight: 400 }}>C</span>
+        <span style={{ fontFamily: 'Courier Prime', fontWeight: 700 }}>C</span>
+        <span style={{ fontFamily: 'Space Grotesk', fontWeight: 500 }}>S</span>
+        <span style={{ fontFamily: 'Space Grotesk', fontWeight: 700 }}>S</span>
+        <span style={{ fontFamily: 'Inter', fontWeight: 400 }}>I</span>
+        <span style={{ fontFamily: 'Inter', fontWeight: 600 }}>I</span>
+      </div>
     </div>
   );
 }

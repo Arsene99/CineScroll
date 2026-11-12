@@ -6,6 +6,7 @@ import {
   measureCreditsContentHeight,
   formatTime,
   getCanvasDimensions,
+  getResolutionDimensions,
 } from './creditsEngine';
 
 test('parseCreditsText identifies headers, role-pairs, and blank lines', () => {
@@ -94,3 +95,20 @@ test('getCanvasDimensions returns correct aspect ratio proportions', () => {
   assert.equal(dims11.width, 800);
   assert.equal(dims11.height, 800);
 });
+
+test('getResolutionDimensions produces even pixel dimensions for all resolutions', () => {
+  const res720 = getResolutionDimensions('9:16', '720p');
+  assert.equal(res720.width % 2, 0);
+  assert.equal(res720.height % 2, 0);
+  assert.equal(res720.width, 720);
+  assert.equal(res720.height, 1280);
+
+  const res1080 = getResolutionDimensions('16:9', '1080p');
+  assert.equal(res1080.width, 1920);
+  assert.equal(res1080.height, 1080);
+
+  const res4k = getResolutionDimensions('9:16', '4k');
+  assert.equal(res4k.width, 2160);
+  assert.equal(res4k.height, 3840);
+});
+

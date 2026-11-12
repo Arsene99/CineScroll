@@ -211,6 +211,8 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
     setSubtitles((prev) => prev.filter((s) => s.id !== id));
   };
 
+  const [exportExt, setExportExt] = useState('mp4');
+
   const handleExportSubtitlesVideo = async () => {
     setIsExporting(true);
     setExportProgress(0);
@@ -221,14 +223,38 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
 
     const stream = canvas.captureStream(30);
     const recordedChunks: Blob[] = [];
-    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+
+    let chosenMime = '';
+    let ext = 'mp4';
+    const mp4Candidates = ['video/mp4;codecs=avc1', 'video/mp4'];
+    for (const cand of mp4Candidates) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(cand)) {
+        chosenMime = cand;
+        ext = 'mp4';
+        break;
+      }
+    }
+    if (!chosenMime) {
+      chosenMime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
+        : 'video/webm';
+      ext = 'webm';
+    }
+    setExportExt(ext);
+
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(stream, { mimeType: chosenMime || undefined, videoBitsPerSecond: 4_000_000 });
+    } catch {
+      recorder = new MediaRecorder(stream);
+    }
 
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) recordedChunks.push(e.data);
     };
 
     recorder.onstop = () => {
-      const blob = new Blob(recordedChunks, { type: 'video/webm' });
+      const blob = new Blob(recordedChunks, { type: recorder.mimeType || (ext === 'mp4' ? 'video/mp4' : 'video/webm') });
       setDownloadUrl(URL.createObjectURL(blob));
       setIsExporting(false);
       setExportProgress(100);
@@ -462,10 +488,10 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
           <div className="flex items-center gap-2">
             <a
               href={downloadUrl}
-              download="sous-titres-cinescroll.webm"
+              download={`sous-titres-cinescroll.${exportExt}`}
               className="px-3 py-1.5 rounded-xl bg-sky-500 text-neutral-950 font-bold text-xs"
             >
-              Télécharger
+              Télécharger ({exportExt.toUpperCase()})
             </a>
             <button
               onClick={() => setDownloadUrl(null)}
