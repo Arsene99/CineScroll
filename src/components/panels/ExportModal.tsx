@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Download, Share2, Film, CheckCircle2, X } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Download, Share2, Film, CheckCircle2, X, RotateCcw } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CreditsConfig } from '../../types';
 import {
@@ -27,8 +27,17 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
 
-  const animFrameRef = React.useRef<number | null>(null);
-  const recorderRef = React.useRef<MediaRecorder | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+
+  // Clean up object URL when component unmounts or before a new one is set
+  useEffect(() => {
+    return () => {
+      if (downloadUrl) {
+        URL.revokeObjectURL(downloadUrl);
+      }
+    };
+  }, [downloadUrl]);
 
   const handleClose = () => {
     if (isExporting) {
@@ -38,6 +47,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       }
       globalAudioEngine.stop();
       setIsExporting(false);
+    }
+    if (downloadUrl) {
+      URL.revokeObjectURL(downloadUrl);
+      setDownloadUrl(null);
     }
     onClose();
   };
@@ -287,34 +300,53 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <span>{isExporting ? 'Encodage...' : 'Démarrer le rendu'}</span>
             </button>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
-              <a
-                href={downloadUrl}
-                download={`cinescroll-${Date.now()}.webm`}
-                className="py-3 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg active:scale-98"
-              >
-                <Download className="w-4 h-4" />
-                <span>Télécharger</span>
-              </a>
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <a
+                  href={downloadUrl}
+                  download={`cinescroll-${Date.now()}.webm`}
+                  className="py-3 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg active:scale-98"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Télécharger</span>
+                </a>
 
-              {typeof navigator !== 'undefined' && 'share' in navigator ? (
-                <button
-                  onClick={handleShare}
-                  aria-label="Partager la vidéo"
-                  className="py-3 px-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-medium text-xs flex items-center justify-center gap-2 transition-all active:scale-98"
-                >
-                  <Share2 className="w-4 h-4" />
-                  <span>Partager</span>
-                </button>
-              ) : (
-                <button
-                  onClick={onClose}
-                  aria-label="Terminer"
-                  className="py-3 px-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-medium text-xs flex items-center justify-center gap-2 transition-all active:scale-98"
-                >
-                  <span>Fermer</span>
-                </button>
-              )}
+                {typeof navigator !== 'undefined' && 'share' in navigator ? (
+                  <button
+                    onClick={handleShare}
+                    aria-label="Partager la vidéo"
+                    className="py-3 px-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-medium text-xs flex items-center justify-center gap-2 transition-all active:scale-98"
+                  >
+                    <Share2 className="w-4 h-4" />
+                    <span>Partager</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleClose}
+                    aria-label="Terminer"
+                    className="py-3 px-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-medium text-xs flex items-center justify-center gap-2 transition-all active:scale-98"
+                  >
+                    <span>Fermer</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Regenerate button to easily trigger a new export with the latest modifications */}
+              <button
+                onClick={() => {
+                  setDownloadUrl((prev) => {
+                    if (prev) URL.revokeObjectURL(prev);
+                    return null;
+                  });
+                  setProgress(0);
+                  setElapsedSeconds(0);
+                }}
+                aria-label="Refaire un rendu vidéo"
+                className="w-full py-2.5 px-3 rounded-xl bg-neutral-800/80 hover:bg-neutral-800 text-neutral-300 hover:text-white text-xs font-medium flex items-center justify-center gap-1.5 transition-colors border border-neutral-700/60 active:scale-98"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                <span>Nouveau rendu (appliquer vos modifications)</span>
+              </button>
             </div>
           )}
         </div>

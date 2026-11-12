@@ -272,13 +272,15 @@ export const CreditsStudio: React.FC<CreditsStudioProps> = ({ onBack }) => {
       {/* Floating Bottom Toolbar */}
       <Toolbar activeTab={activeTab} onSelectTab={handleSelectTab} />
 
-      {/* Video Exporter Modal */}
-      <ExportModal
-        config={config}
-        isOpen={showExportModal}
-        onClose={() => setShowExportModal(false)}
-        videoElement={videoElementRef.current}
-      />
+      {/* Video Exporter Modal - Remounts fresh each time to ensure latest changes are rendered */}
+      {showExportModal && (
+        <ExportModal
+          config={config}
+          isOpen={showExportModal}
+          onClose={() => setShowExportModal(false)}
+          videoElement={videoElementRef.current}
+        />
+      )}
     </div>
   );
 };
