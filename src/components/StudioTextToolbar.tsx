@@ -13,9 +13,12 @@ import {
   Palette,
   Minus,
   Plus,
+  Check,
 } from 'lucide-react';
 import { CreditsConfig, ScrollDirection, TextAlignment } from '../types';
 import { FONT_OPTIONS } from '../utils/presets';
+import { gradientToCss } from '../utils/creditsEngine';
+import { ColorPalettePicker } from './ColorPalettePicker';
 
 export type TextToolId =
   | 'speed'
@@ -40,14 +43,6 @@ export const StudioTextToolbar: React.FC<StudioTextToolbarProps> = ({
   activeTool,
   onSelectTool,
 }) => {
-  const textColors = [
-    { name: 'Blanc', value: '#ffffff' },
-    { name: 'Doré', value: '#fbbf24' },
-    { name: 'Argent', value: '#e2e8f0' },
-    { name: 'Cyan', value: '#38bdf8' },
-    { name: 'Crème', value: '#fef3c7' },
-  ];
-
   const directions: { id: ScrollDirection; icon: React.ComponentType<{ className?: string }>; label: string }[] = [
     { id: 'bottom-to-top', icon: ArrowUp, label: 'Haut' },
     { id: 'top-to-bottom', icon: ArrowDown, label: 'Bas' },
@@ -176,7 +171,7 @@ export const StudioTextToolbar: React.FC<StudioTextToolbarProps> = ({
           onClick={() => handleToolClick('color')}
           aria-label="Couleur du texte"
           aria-pressed={activeTool === 'color'}
-          className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
+          className={`relative flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
             activeTool === 'color'
               ? 'bg-amber-500 text-neutral-950 shadow-sm'
               : 'text-neutral-400 hover:text-white hover:bg-neutral-850'
@@ -184,6 +179,12 @@ export const StudioTextToolbar: React.FC<StudioTextToolbarProps> = ({
           title="Couleur"
         >
           <Palette className="w-4 h-4" />
+          <span
+            className="w-2.5 h-2.5 rounded-full border border-black/60 absolute bottom-0.5 right-0.5 shadow"
+            style={{
+              background: config.textGradient ? gradientToCss(config.textGradient) : config.color,
+            }}
+          />
         </button>
       </div>
 
@@ -192,7 +193,11 @@ export const StudioTextToolbar: React.FC<StudioTextToolbarProps> = ({
         <div
           role="region"
           aria-label="Réglage en direct"
-          className="absolute left-1/2 -translate-x-1/2 top-full mt-1.5 z-40 bg-neutral-950/95 backdrop-blur-2xl border border-neutral-800 rounded-2xl p-2.5 shadow-2xl shadow-black max-w-[92vw] w-auto animate-in fade-in slide-in-from-top-2 duration-150"
+          className={`absolute left-1/2 -translate-x-1/2 top-full mt-1.5 z-40 bg-neutral-950/95 backdrop-blur-2xl border border-neutral-800 rounded-2xl p-2.5 shadow-2xl shadow-black animate-in fade-in slide-in-from-top-2 duration-150 ${
+            activeTool === 'color'
+              ? 'w-[330px] max-w-[94vw] max-h-[65vh] overflow-y-auto no-scrollbar p-3'
+              : 'max-w-[92vw] w-auto'
+          }`}
         >
           {/* Tool: Speed & Duration */}
           {activeTool === 'speed' && (
@@ -371,25 +376,31 @@ export const StudioTextToolbar: React.FC<StudioTextToolbarProps> = ({
             </div>
           )}
 
-          {/* Tool: Color */}
+          {/* Tool: Color & Gradient Studio */}
           {activeTool === 'color' && (
-            <div className="flex items-center gap-2">
-              {textColors.map((c) => (
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between pb-1.5 border-b border-neutral-800/80">
+                <span className="text-xs font-bold text-neutral-100">Couleur du texte</span>
                 <button
-                  key={c.value}
-                  onClick={() => {
-                    onChange({ color: c.value });
-                    onSelectTool(null);
-                  }}
-                  aria-label={c.name}
-                  className={`w-7 h-7 rounded-full border-2 transition-transform ${
-                    config.color === c.value
-                      ? 'border-amber-500 scale-110 shadow-md'
-                      : 'border-transparent hover:scale-105'
-                  }`}
-                  style={{ backgroundColor: c.value }}
-                />
-              ))}
+                  type="button"
+                  onClick={() => onSelectTool(null)}
+                  aria-label="Valider la couleur du texte"
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-[11px] transition-colors"
+                >
+                  <Check className="w-3 h-3 stroke-[3]" />
+                  <span>OK</span>
+                </button>
+              </div>
+              <ColorPalettePicker
+                mode={config.textGradient ? 'gradient' : 'solid'}
+                color={config.color}
+                gradient={config.textGradient}
+                compact
+                onChangeSolid={(hex) => onChange({ color: hex, textGradient: undefined })}
+                onChangeGradient={(grad) =>
+                  onChange({ textGradient: grad, color: grad.colors[0] || config.color })
+                }
+              />
             </div>
           )}
         </div>

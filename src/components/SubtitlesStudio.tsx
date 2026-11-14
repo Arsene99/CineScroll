@@ -1,9 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ArrowLeft, Plus, Trash2, Play, Pause, Download, Upload, Sparkles, X } from 'lucide-react';
-import { SubtitleItem, AspectRatio, BackgroundConfig } from '../types';
-import { formatTime, formatFileSize, getCanvasDimensions, getResolutionDimensions } from '../utils/creditsEngine';
+import { ArrowLeft, Plus, Trash2, Play, Pause, Download, Upload, Sparkles, X, Palette, Check } from 'lucide-react';
+import { SubtitleItem, AspectRatio, BackgroundConfig, GradientConfig } from '../types';
+import {
+  createCanvasLinearGradient,
+  formatTime,
+  formatFileSize,
+  getAnimatedGradientState,
+  getCanvasDimensions,
+  getResolutionDimensions,
+  gradientToCss,
+} from '../utils/creditsEngine';
 import { globalAudioEngine } from '../utils/audioSynth';
 import { exportVideo } from '../utils/videoExporter';
+import { ColorPalettePicker } from './ColorPalettePicker';
 import confetti from 'canvas-confetti';
 
 interface SubtitlesStudioProps {
@@ -26,7 +35,10 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
   });
   const [fontSize, setFontSize] = useState(24);
   const [color, setColor] = useState('#ffffff');
-  const [bgColor, setBgColor] = useState('rgba(0,0,0,0.75)');
+  const [textGradient, setTextGradient] = useState<GradientConfig | undefined>(undefined);
+  const [bgColor] = useState('rgba(0,0,0,0.75)');
+  const [showColorDrawer, setShowColorDrawer] = useState(false);
+  const [colorTarget, setColorTarget] = useState<'text' | 'background'>('text');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [totalDuration, setTotalDuration] = useState(14);
@@ -106,7 +118,12 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
 
   // Shared subtitle frame renderer for both live preview and fast export
   const drawSubtitleFrame = useCallback(
-    (ctx: CanvasRenderingContext2D, timeSec: number) => {
+    (
+      ctx: CanvasRenderingContext2D,
+      timeSec: number,
+      overrideBgGrad?: GradientConfig | null,
+      overrideTextGrad?: GradientConfig | null
+    ) => {
       const { width, height } = ctx.canvas;
       const activeSub = subtitles.find(
         (s) => timeSec >= s.startTime && timeSec <= s.endTime
@@ -114,8 +131,13 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
 
       ctx.clearRect(0, 0, width, height);
 
+      const effectiveBgGrad = overrideBgGrad ?? background.gradient;
+
       if (background.source === 'color') {
         ctx.fillStyle = background.value;
+        ctx.fillRect(0, 0, width, height);
+      } else if (background.source === 'gradient' && effectiveBgGrad) {
+        ctx.fillStyle = createCanvasLinearGradient(ctx, width, height, effectiveBgGrad, timeSec);
         ctx.fillRect(0, 0, width, height);
       } else if (bgImageRef.current) {
         const img = bgImageRef.current;
@@ -187,15 +209,18 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
         ctx.roundRect(boxX, boxY, boxWidth, boxHeight, Math.round(10 * scale));
         ctx.fill();
 
-        ctx.fillStyle = color;
+        const effectiveTextGrad = overrideTextGrad ?? textGradient;
+        ctx.fillStyle = effectiveTextGrad
+          ? createCanvasLinearGradient(ctx, width, height, effectiveTextGrad, timeSec)
+          : color;
         ctx.fillText(activeSub.text, width / 2, subY);
         ctx.restore();
       }
     },
-    [aspectRatio, background, subtitles, fontSize, color, bgColor]
+    [aspectRatio, background, subtitles, fontSize, color, textGradient, bgColor]
   );
 
-  // Render subtitle frame onto preview canvas
+  // Render subtitle frame onto preview canvas (plus gentle idle loop for animated gradients)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -208,8 +233,44 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
       canvas.height = height;
     }
 
+    const hasAnimatedGradient =
+      (background.source === 'gradient' && Boolean(background.gradient?.animated)) ||
+      Boolean(textGradient?.animated);
+
+    if (hasAnimatedGradient && !isPlaying && currentTime === 0) {
+      let rafId = 0;
+      const startMs = performance.now();
+      let lastDrawMs = -100;
+
+      const tick = (now: number) => {
+        if (now - lastDrawMs >= 33) {
+          lastDrawMs = now;
+          const previewTime = (now - startMs) / 1000;
+          const bgGrad =
+            background.source === 'gradient' && background.gradient?.animated
+              ? {
+                  ...background.gradient,
+                  ...getAnimatedGradientState(background.gradient, previewTime),
+                  animated: false,
+                }
+              : null;
+          const txtGrad = textGradient?.animated
+            ? {
+                ...textGradient,
+                ...getAnimatedGradientState(textGradient, previewTime),
+                animated: false,
+              }
+            : null;
+          drawSubtitleFrame(ctx, 0, bgGrad, txtGrad);
+        }
+        rafId = requestAnimationFrame(tick);
+      };
+      rafId = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(rafId);
+    }
+
     drawSubtitleFrame(ctx, currentTime);
-  }, [aspectRatio, currentTime, drawSubtitleFrame]);
+  }, [aspectRatio, currentTime, isPlaying, background.source, background.gradient, textGradient, drawSubtitleFrame]);
 
   const handleAddSubtitle = () => {
     const lastSub = subtitles[subtitles.length - 1];
@@ -249,7 +310,10 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
       return null;
     });
 
-    const hasMotionBg = background.source === 'video';
+    const hasMotionBg =
+      background.source === 'video' ||
+      Boolean(background.source === 'gradient' && background.gradient?.animated) ||
+      Boolean(textGradient?.animated);
     const { width, height, bitrate } = getResolutionDimensions(aspectRatio, '720p', 'balanced', hasMotionBg);
     const signal = { cancelled: false };
 
@@ -262,7 +326,7 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
         bitrate,
         format: 'mp4',
         bgImage: bgImageRef.current,
-        bgVideo: hasMotionBg ? videoElementRef.current : null,
+        bgVideo: background.source === 'video' ? videoElementRef.current : null,
         signal,
         drawFrame: (ctx, timeSec) => {
           drawSubtitleFrame(ctx, timeSec);
@@ -392,27 +456,44 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
       {/* Subtitles Items List & Tools Drawer */}
       <div className="h-64 bg-neutral-950/95 border-t border-neutral-800 p-3 flex flex-col justify-between">
         {/* Quick action bar */}
-        <div className="flex items-center justify-between pb-2 border-b border-neutral-900">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between pb-2 border-b border-neutral-900 gap-1">
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
             <button
               onClick={() => imageInputRef.current?.click()}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-[11px] text-neutral-300 hover:text-white active:scale-95"
+              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-[11px] text-neutral-300 hover:text-white active:scale-95 whitespace-nowrap"
             >
               <Upload className="w-3 h-3 text-sky-400" />
               <span>Image</span>
             </button>
             <button
               onClick={() => videoInputRef.current?.click()}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-[11px] text-neutral-300 hover:text-white active:scale-95"
+              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-[11px] text-neutral-300 hover:text-white active:scale-95 whitespace-nowrap"
             >
               <Upload className="w-3 h-3 text-sky-400" />
               <span>Vidéo</span>
             </button>
             <button
+              onClick={() => setShowColorDrawer((prev) => !prev)}
+              aria-label="Couleurs texte et fond"
+              aria-pressed={showColorDrawer}
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] whitespace-nowrap transition-colors ${
+                showColorDrawer
+                  ? 'bg-sky-500/20 border-sky-500 text-sky-300'
+                  : 'bg-neutral-900 border-neutral-800 text-neutral-300 hover:text-white'
+              }`}
+            >
+              <Palette className="w-3 h-3 text-sky-400" />
+              <span>Couleurs</span>
+              <span
+                className="w-2.5 h-2.5 rounded-full border border-white/25"
+                style={{ background: textGradient ? gradientToCss(textGradient) : color }}
+              />
+            </button>
+            <button
               onClick={() =>
                 setAspectRatio(aspectRatio === '9:16' ? '16:9' : aspectRatio === '16:9' ? '1:1' : '9:16')
               }
-              className="px-2.5 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-[11px] font-mono text-neutral-300 hover:text-white"
+              className="px-2 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-[11px] font-mono text-neutral-300 hover:text-white whitespace-nowrap"
             >
               {aspectRatio}
             </button>
@@ -421,7 +502,7 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
           <button
             onClick={handleAddSubtitle}
             aria-label="Ajouter un sous-titre"
-            className="flex items-center gap-1 px-3 py-1 rounded-lg bg-sky-500 hover:bg-sky-400 text-neutral-950 font-bold text-xs active:scale-95 shadow-sm"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-500 hover:bg-sky-400 text-neutral-950 font-bold text-[11px] active:scale-95 shadow-sm flex-shrink-0"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Ajouter</span>
@@ -475,6 +556,86 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
           })}
         </div>
       </div>
+
+      {/* Color & Animated Gradient Drawer for Subtitles */}
+      {showColorDrawer && (
+        <div className="fixed inset-x-0 bottom-0 z-50 bg-neutral-950/98 backdrop-blur-2xl border-t border-neutral-800 rounded-t-3xl p-4 max-h-[68vh] overflow-y-auto no-scrollbar shadow-2xl space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center p-0.5 rounded-lg bg-neutral-900 border border-neutral-800">
+              <button
+                type="button"
+                onClick={() => setColorTarget('text')}
+                className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
+                  colorTarget === 'text' ? 'bg-sky-500 text-neutral-950' : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                Texte
+              </button>
+              <button
+                type="button"
+                onClick={() => setColorTarget('background')}
+                className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
+                  colorTarget === 'background' ? 'bg-sky-500 text-neutral-950' : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                Arrière-plan
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowColorDrawer(false)}
+              aria-label="Fermer la palette de couleurs"
+              className="flex items-center gap-1 px-3 py-1 rounded-lg bg-sky-500 text-neutral-950 font-bold text-xs"
+            >
+              <Check className="w-3.5 h-3.5 stroke-[3]" />
+              <span>OK</span>
+            </button>
+          </div>
+
+          {colorTarget === 'text' ? (
+            <ColorPalettePicker
+              mode={textGradient ? 'gradient' : 'solid'}
+              color={color}
+              gradient={textGradient}
+              label="Couleur des sous-titres"
+              onChangeSolid={(hex) => {
+                setColor(hex);
+                setTextGradient(undefined);
+              }}
+              onChangeGradient={(grad) => {
+                setTextGradient(grad);
+                setColor(grad.colors[0] || color);
+              }}
+            />
+          ) : (
+            <ColorPalettePicker
+              mode={background.source === 'gradient' ? 'gradient' : 'solid'}
+              color={background.source === 'color' ? background.value : '#08090d'}
+              gradient={background.gradient}
+              label="Couleur de l'arrière-plan"
+              onChangeSolid={(hex) =>
+                setBackground({
+                  ...background,
+                  source: 'color',
+                  value: hex,
+                  gradient: undefined,
+                  customFileName: undefined,
+                })
+              }
+              onChangeGradient={(grad) =>
+                setBackground({
+                  ...background,
+                  source: 'gradient',
+                  value: grad.colors[0] || '#1e0b36',
+                  gradient: grad,
+                  customFileName: undefined,
+                })
+              }
+            />
+          )}
+        </div>
+      )}
 
       {/* Export ready banner if url exists */}
       {downloadUrl && (

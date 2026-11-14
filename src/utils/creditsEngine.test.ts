@@ -10,6 +10,13 @@ import {
   getCanvasFont,
   estimateExportSizeMB,
   formatFileSize,
+  normalizeHexColor,
+  hexToHsl,
+  hslToHex,
+  interpolateHexColor,
+  computeLinearGradientPoints,
+  getAnimatedGradientState,
+  gradientToCss,
 } from './creditsEngine';
 
 test('parseCreditsText identifies headers, role-pairs, and blank lines', () => {
@@ -149,6 +156,63 @@ test('getResolutionDimensions and estimateExportSizeMB scale with FPS and keep 7
 test('formatFileSize formats bytes cleanly in Ko and Mo', () => {
   assert.equal(formatFileSize(512 * 1024), '512 Ko');
   assert.equal(formatFileSize(1.8 * 1024 * 1024), '1.8 Mo');
+});
+
+test('normalizeHexColor normalizes short and uppercase hex codes safely', () => {
+  assert.equal(normalizeHexColor('#F0A'), '#ff00aa');
+  assert.equal(normalizeHexColor('EC4899'), '#ec4899');
+  assert.equal(normalizeHexColor('invalid', '#8b5cf6'), '#8b5cf6');
+});
+
+test('hexToHsl and hslToHex round-trip pink, purple, white, and black accurately', () => {
+  for (const hex of ['#ec4899', '#8b5cf6', '#ffffff', '#000000']) {
+    const hsl = hexToHsl(hex);
+    const roundTripped = hslToHex(hsl.h, hsl.s, hsl.l);
+    const orig = hexToHsl(roundTripped);
+    assert.ok(Math.abs(hsl.h - orig.h) <= 2, `Hue mismatch for ${hex}`);
+    assert.ok(Math.abs(hsl.s - orig.s) <= 2, `Sat mismatch for ${hex}`);
+    assert.ok(Math.abs(hsl.l - orig.l) <= 2, `Lig mismatch for ${hex}`);
+  }
+});
+
+test('interpolateHexColor blends endpoints and midpoint accurately', () => {
+  assert.equal(interpolateHexColor('#000000', '#ffffff', 0), '#000000');
+  assert.equal(interpolateHexColor('#000000', '#ffffff', 1), '#ffffff');
+  assert.equal(interpolateHexColor('#000000', '#fe00fe', 0.5), '#7f007f');
+});
+
+test('computeLinearGradientPoints respects CSS gradient angles', () => {
+  const horiz = computeLinearGradientPoints(1000, 500, 90);
+  assert.ok(horiz.x1 > horiz.x0, '90deg should flow left-to-right');
+  assert.ok(Math.abs(horiz.y1 - horiz.y0) < 0.01);
+
+  const vert = computeLinearGradientPoints(1000, 500, 180);
+  assert.ok(vert.y1 > vert.y0, '180deg should flow top-to-bottom');
+  assert.ok(Math.abs(vert.x1 - vert.x0) < 0.01);
+});
+
+test('getAnimatedGradientState preserves static gradients and shifts animated ones over time', () => {
+  const staticGrad = {
+    colors: ['#4c1d95', '#ec4899'],
+    angle: 135,
+    animated: false,
+    animationSpeed: 1,
+  };
+  const staticAt2s = getAnimatedGradientState(staticGrad, 2);
+  assert.equal(staticAt2s.angle, 135);
+  assert.deepEqual(staticAt2s.colors, ['#4c1d95', '#ec4899']);
+
+  const animGrad = {
+    colors: ['#4c1d95', '#ec4899', '#38bdf8'],
+    angle: 135,
+    animated: true,
+    animationSpeed: 1,
+  };
+  const t0 = getAnimatedGradientState(animGrad, 0);
+  const t2 = getAnimatedGradientState(animGrad, 2);
+  assert.notEqual(t0.angle, t2.angle);
+  assert.notDeepEqual(t0.colors, t2.colors);
+  assert.equal(gradientToCss(staticGrad), 'linear-gradient(135deg, #4c1d95, #ec4899)');
 });
 
 

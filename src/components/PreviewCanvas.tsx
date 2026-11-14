@@ -3,6 +3,7 @@ import { Play, Pause, RotateCcw } from 'lucide-react';
 import { CreditsConfig } from '../types';
 import {
   formatTime,
+  getAnimatedGradientState,
   getCanvasDimensions,
   parseCreditsText,
   renderCreditsFrame,
@@ -57,7 +58,7 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
     }
   }, [isPlaying, config.background.source, videoElementRef]);
 
-  // Draw frame on canvas
+  // Draw frame on canvas (plus gentle idle loop when paused at t=0 with an animated gradient)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -80,8 +81,61 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
         ? videoElementRef?.current || null
         : bgImageRef.current;
 
+    const hasAnimatedGradient =
+      (config.background.source === 'gradient' && Boolean(config.background.gradient?.animated)) ||
+      Boolean(config.textGradient?.animated);
+
+    if (hasAnimatedGradient && !isPlaying && currentTime === 0) {
+      let rafId = 0;
+      const startMs = performance.now();
+      let lastDrawMs = -100;
+
+      const tick = (now: number) => {
+        if (now - lastDrawMs >= 33) {
+          lastDrawMs = now;
+          const previewTime = (now - startMs) / 1000;
+          const animatedBg =
+            config.background.source === 'gradient' && config.background.gradient?.animated
+              ? getAnimatedGradientState(config.background.gradient, previewTime)
+              : null;
+          const animatedText = config.textGradient?.animated
+            ? getAnimatedGradientState(config.textGradient, previewTime)
+            : null;
+
+          const shiftedConfig: CreditsConfig = {
+            ...config,
+            background:
+              animatedBg && config.background.gradient
+                ? {
+                    ...config.background,
+                    gradient: {
+                      ...config.background.gradient,
+                      angle: animatedBg.angle,
+                      colors: animatedBg.colors,
+                      animated: false,
+                    },
+                  }
+                : config.background,
+            textGradient:
+              animatedText && config.textGradient
+                ? {
+                    ...config.textGradient,
+                    angle: animatedText.angle,
+                    colors: animatedText.colors,
+                    animated: false,
+                  }
+                : config.textGradient,
+          };
+          renderCreditsFrame(ctx, shiftedConfig, 0, parsedLines, bgMedia);
+        }
+        rafId = requestAnimationFrame(tick);
+      };
+      rafId = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(rafId);
+    }
+
     renderCreditsFrame(ctx, config, currentTime, parsedLines, bgMedia);
-  }, [config, currentTime, videoElementRef, onCanvasReady]);
+  }, [config, currentTime, isPlaying, videoElementRef, onCanvasReady]);
 
   // Handle scrubber change
   const handleScrub = (e: React.ChangeEvent<HTMLInputElement>) => {

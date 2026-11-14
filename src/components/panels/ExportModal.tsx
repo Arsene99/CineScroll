@@ -70,7 +70,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
   if (!isOpen) return null;
 
-  const hasMotionBackground = config.background.source === 'video';
+  const hasMotionBackground =
+    config.background.source === 'video' ||
+    Boolean(config.background.source === 'gradient' && config.background.gradient?.animated) ||
+    Boolean(config.textGradient?.animated);
   const hasActiveAudio = Boolean(
     !config.audio.muted && config.audio.presetId !== 'none' && config.audio.volume > 0
   );

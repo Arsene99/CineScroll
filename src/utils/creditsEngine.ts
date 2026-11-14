@@ -1,4 +1,4 @@
-import { CreditsConfig, ScrollDirection, TextAlignment } from '../types';
+import { CreditsConfig, GradientConfig, ScrollDirection, TextAlignment } from '../types';
 
 export interface ParsedCreditLine {
   type: 'title' | 'role-pair' | 'regular' | 'blank';
@@ -292,8 +292,209 @@ export interface RenderFrameOptions {
 }
 
 /**
- * Pre-renders static color, gradient, or photo background (+ overlay) once before an export
+ * Normalizes any hex color string (#rgb or #rrggbb) into #rrggbb lowercase.
+ */
+export function normalizeHexColor(input: string, fallback = '#ffffff'): string {
+  const clean = (input || '').trim().replace(/^#/, '');
+  if (/^[0-9a-fA-F]{3}$/.test(clean)) {
+    return (
+      '#' +
+      clean
+        .split('')
+        .map((c) => c + c)
+        .join('')
+        .toLowerCase()
+    );
+  }
+  if (/^[0-9a-fA-F]{6}$/.test(clean)) {
+    return `#${clean.toLowerCase()}`;
+  }
+  return fallback;
+}
+
+/**
+ * Converts a hex color (#rrggbb) to HSL { h: 0..360, s: 0..100, l: 0..100 }.
+ */
+export function hexToHsl(hex: string): { h: number; s: number; l: number } {
+  const norm = normalizeHexColor(hex, '#ffffff').slice(1);
+  const r = parseInt(norm.slice(0, 2), 16) / 255;
+  const g = parseInt(norm.slice(2, 4), 16) / 255;
+  const b = parseInt(norm.slice(4, 6), 16) / 255;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r:
+        h = (g - b) / d + (g < b ? 6 : 0);
+        break;
+      case g:
+        h = (b - r) / d + 2;
+        break;
+      default:
+        h = (r - g) / d + 4;
+        break;
+    }
+    h /= 6;
+  }
+
+  return {
+    h: Math.round(h * 360),
+    s: Math.round(s * 100),
+    l: Math.round(l * 100),
+  };
+}
+
+/**
+ * Converts HSL (h: 0..360, s: 0..100, l: 0..100) to #rrggbb hex string.
+ */
+export function hslToHex(h: number, s: number, l: number): string {
+  const hue = (((h % 360) + 360) % 360) / 360;
+  const sat = Math.max(0, Math.min(100, s)) / 100;
+  const lig = Math.max(0, Math.min(100, l)) / 100;
+
+  const hue2rgb = (p: number, q: number, t: number) => {
+    let tt = t;
+    if (tt < 0) tt += 1;
+    if (tt > 1) tt -= 1;
+    if (tt < 1 / 6) return p + (q - p) * 6 * tt;
+    if (tt < 1 / 2) return q;
+    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
+    return p;
+  };
+
+  let r: number;
+  let g: number;
+  let b: number;
+
+  if (sat === 0) {
+    r = g = b = lig;
+  } else {
+    const q = lig < 0.5 ? lig * (1 + sat) : lig + sat - lig * sat;
+    const p = 2 * lig - q;
+    r = hue2rgb(p, q, hue + 1 / 3);
+    g = hue2rgb(p, q, hue);
+    b = hue2rgb(p, q, hue - 1 / 3);
+  }
+
+  const toHex = (x: number) => Math.round(x * 255).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+/**
+ * Smoothly interpolates between two hex colors (t in 0..1).
+ */
+export function interpolateHexColor(hexA: string, hexB: string, t: number): string {
+  const clampT = Math.max(0, Math.min(1, t));
+  const a = normalizeHexColor(hexA, '#000000').slice(1);
+  const b = normalizeHexColor(hexB, '#ffffff').slice(1);
+
+  const rA = parseInt(a.slice(0, 2), 16);
+  const gA = parseInt(a.slice(2, 4), 16);
+  const bA = parseInt(a.slice(4, 6), 16);
+
+  const rB = parseInt(b.slice(0, 2), 16);
+  const gB = parseInt(b.slice(2, 4), 16);
+  const bB = parseInt(b.slice(4, 6), 16);
+
+  const r = Math.round(rA + (rB - rA) * clampT);
+  const g = Math.round(gA + (gB - gA) * clampT);
+  const bl = Math.round(bA + (bB - bA) * clampT);
+
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${bl.toString(16).padStart(2, '0')}`;
+}
+
+/**
+ * Computes Canvas 2D linear gradient endpoints matching CSS angle convention (0deg = bottom->top, 90deg = left->right, 180deg = top->bottom).
+ */
+export function computeLinearGradientPoints(
+  width: number,
+  height: number,
+  angleDeg: number
+): { x0: number; y0: number; x1: number; y1: number } {
+  const rad = ((angleDeg - 90) * Math.PI) / 180;
+  const dx = Math.cos(rad);
+  const dy = Math.sin(rad);
+  const halfSpan = (Math.abs(width * dx) + Math.abs(height * dy)) / 2;
+  const cx = width / 2;
+  const cy = height / 2;
+  return {
+    x0: cx - dx * halfSpan,
+    y0: cy - dy * halfSpan,
+    x1: cx + dx * halfSpan,
+    y1: cy + dy * halfSpan,
+  };
+}
+
+/**
+ * Computes static or smoothly animated gradient angle + color stops at a given timeSec.
+ */
+export function getAnimatedGradientState(
+  gradient: GradientConfig,
+  timeSec: number
+): { angle: number; colors: string[] } {
+  const safeColors =
+    gradient.colors && gradient.colors.length >= 2
+      ? gradient.colors.map((c) => normalizeHexColor(c, '#6366f1'))
+      : ['#1e0b36', '#7e22ce'];
+
+  if (!gradient.animated) {
+    return { angle: gradient.angle ?? 135, colors: safeColors };
+  }
+
+  const speed = gradient.animationSpeed ?? 1;
+  // Gentle continuous angle drift + smooth cyclic color wave
+  const angle = ((gradient.angle ?? 135) + timeSec * 22 * speed) % 360;
+  const phase = (timeSec * 0.25 * speed) % safeColors.length;
+  const shiftedColors = safeColors.map((_, idx) => {
+    const pos = (idx + phase) % safeColors.length;
+    const baseIdx = Math.floor(pos);
+    const nextIdx = (baseIdx + 1) % safeColors.length;
+    const frac = pos - baseIdx;
+    return interpolateHexColor(safeColors[baseIdx], safeColors[nextIdx], frac);
+  });
+
+  return { angle, colors: shiftedColors };
+}
+
+/**
+ * Creates a CanvasGradient for a GradientConfig at a given timestamp.
+ */
+export function createCanvasLinearGradient(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  gradient: GradientConfig,
+  timeSec: number
+): CanvasGradient {
+  const { angle, colors } = getAnimatedGradientState(gradient, timeSec);
+  const pts = computeLinearGradientPoints(width, height, angle);
+  const grad = ctx.createLinearGradient(pts.x0, pts.y0, pts.x1, pts.y1);
+  const lastIdx = Math.max(1, colors.length - 1);
+  colors.forEach((col, i) => {
+    grad.addColorStop(i / lastIdx, col);
+  });
+  return grad;
+}
+
+/**
+ * Formats a GradientConfig into a CSS linear-gradient string for UI previews.
+ */
+export function gradientToCss(gradient: GradientConfig): string {
+  const colors = gradient.colors.length >= 2 ? gradient.colors : ['#1e0b36', '#7e22ce'];
+  return `linear-gradient(${Math.round(gradient.angle ?? 135)}deg, ${colors.join(', ')})`;
+}
+
+/**
+ * Pre-renders static color, static gradient, or photo background (+ overlay) once before an export
  * so hundreds/thousands of frames avoid re-scaling images or recreating gradients.
+ * Returns null for video or animated gradients so each frame renders dynamically.
  */
 export function createStaticBackgroundCache(
   width: number,
@@ -301,7 +502,11 @@ export function createStaticBackgroundCache(
   config: CreditsConfig,
   bgImage: HTMLImageElement | null
 ): HTMLCanvasElement | null {
-  if (config.background.source === 'video' || typeof document === 'undefined') {
+  if (
+    config.background.source === 'video' ||
+    (config.background.source === 'gradient' && config.background.gradient?.animated) ||
+    typeof document === 'undefined'
+  ) {
     return null;
   }
 
@@ -313,6 +518,9 @@ export function createStaticBackgroundCache(
 
   if (config.background.source === 'color') {
     ctx.fillStyle = config.background.value || '#050505';
+    ctx.fillRect(0, 0, width, height);
+  } else if (config.background.source === 'gradient' && config.background.gradient) {
+    ctx.fillStyle = createCanvasLinearGradient(ctx, width, height, config.background.gradient, 0);
     ctx.fillRect(0, 0, width, height);
   } else if (bgImage) {
     try {
@@ -377,6 +585,15 @@ export function renderCreditsFrame(
     if (config.background.source === 'color') {
       ctx.fillStyle = config.background.value || '#050505';
       ctx.fillRect(0, 0, width, height);
+    } else if (config.background.source === 'gradient' && config.background.gradient) {
+      ctx.fillStyle = createCanvasLinearGradient(
+        ctx,
+        width,
+        height,
+        config.background.gradient,
+        currentTime
+      );
+      ctx.fillRect(0, 0, width, height);
     } else if (bgMedia) {
       try {
         const mediaW = (bgMedia as HTMLVideoElement).videoWidth || (bgMedia as HTMLImageElement).naturalWidth || width;
@@ -437,13 +654,25 @@ export function renderCreditsFrame(
   const cullTop = -baseFontSize * 2.5;
   const cullBottom = height + baseFontSize * 2.5;
 
-  const drawTextWithOptionalFastShadow = (text: string, x: number, y: number, fillStyle: string) => {
+  const primaryTextFill: string | CanvasGradient = config.textGradient
+    ? createCanvasLinearGradient(ctx, width, height, config.textGradient, currentTime)
+    : config.color;
+
+  const drawTextWithOptionalFastShadow = (
+    text: string,
+    x: number,
+    y: number,
+    fillStyle: string | CanvasGradient,
+    alpha = 1
+  ) => {
+    if (alpha !== 1) ctx.globalAlpha = alpha;
     if (useFastOffsetShadow) {
       ctx.fillStyle = 'rgba(0, 0, 0, 0.78)';
       ctx.fillText(text, x, y + shadowOffsetY);
     }
     ctx.fillStyle = fillStyle;
     ctx.fillText(text, x, y);
+    if (alpha !== 1) ctx.globalAlpha = 1;
   };
 
   for (const line of parsedLines) {
@@ -464,7 +693,7 @@ export function renderCreditsFrame(
       const titleSize = Math.round(baseFontSize * 1.4);
       ctx.font = getCanvasFont(700, titleSize, config.fontFamily);
       ctx.textAlign = 'center';
-      drawTextWithOptionalFastShadow(line.title || '', width / 2, yCursor, config.color);
+      drawTextWithOptionalFastShadow(line.title || '', width / 2, yCursor, primaryTextFill);
       yCursor += lineH;
       continue;
     }
@@ -479,11 +708,11 @@ export function renderCreditsFrame(
 
       ctx.font = getCanvasFont(500, roleSize, config.fontFamily);
       ctx.textAlign = 'right';
-      drawTextWithOptionalFastShadow(line.role || '', leftColX, yCursor, 'rgba(255, 255, 255, 0.7)');
+      drawTextWithOptionalFastShadow(line.role || '', leftColX, yCursor, primaryTextFill, 0.72);
 
       ctx.font = getCanvasFont(700, nameSize, config.fontFamily);
       ctx.textAlign = 'left';
-      drawTextWithOptionalFastShadow(line.name || '', rightColX, yCursor, config.color);
+      drawTextWithOptionalFastShadow(line.name || '', rightColX, yCursor, primaryTextFill);
 
       yCursor += lineH;
       continue;
@@ -503,7 +732,7 @@ export function renderCreditsFrame(
       ctx.textAlign = 'center';
     }
 
-    drawTextWithOptionalFastShadow(textToDraw, textX, yCursor, config.color);
+    drawTextWithOptionalFastShadow(textToDraw, textX, yCursor, primaryTextFill);
     yCursor += lineH;
   }
 

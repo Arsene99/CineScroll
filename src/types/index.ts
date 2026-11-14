@@ -6,11 +6,19 @@ export type TextAlignment = 'left' | 'center' | 'right';
 
 export type AspectRatio = '9:16' | '16:9' | '1:1';
 
-export type BackgroundSource = 'preset' | 'color' | 'image' | 'video';
+export type BackgroundSource = 'preset' | 'color' | 'gradient' | 'image' | 'video';
+
+export interface GradientConfig {
+  colors: string[]; // 2 or 3 hex colors
+  angle: number; // 0 to 360 degrees
+  animated: boolean;
+  animationSpeed?: number; // 0.5 to 2.5 (default 1)
+}
 
 export interface BackgroundConfig {
   source: BackgroundSource;
   value: string; // url, hex color, or preset id
+  gradient?: GradientConfig;
   overlayOpacity: number; // 0 to 1
   blur: number; // in pixels
   customFileName?: string;
@@ -30,6 +38,7 @@ export interface CreditsConfig {
   fontFamily: string;
   fontSize: number; // base size
   color: string;
+  textGradient?: GradientConfig;
   alignment: TextAlignment;
   direction: ScrollDirection;
   speedDuration: number; // total duration in seconds (e.g. 10s - 60s)

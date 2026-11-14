@@ -1,7 +1,8 @@
 import React, { useRef } from 'react';
-import { Upload, Video, Palette, SunMedium, FileImage, Film, X } from 'lucide-react';
-import { BackgroundConfig } from '../../types';
+import { Upload, Video, SunMedium, FileImage, Film, X, Sparkles } from 'lucide-react';
+import { BackgroundConfig, GradientConfig } from '../../types';
 import { BACKGROUND_PRESETS } from '../../utils/presets';
+import { ColorPalettePicker } from '../ColorPalettePicker';
 
 interface BackgroundPanelProps {
   background: BackgroundConfig;
@@ -20,6 +21,7 @@ export const BackgroundPanel: React.FC<BackgroundPanelProps> = ({ background, on
         ...background,
         source: 'image',
         value: url,
+        gradient: undefined,
         customFileName: file.name,
       });
     }
@@ -33,6 +35,7 @@ export const BackgroundPanel: React.FC<BackgroundPanelProps> = ({ background, on
         ...background,
         source: 'video',
         value: url,
+        gradient: undefined,
         customFileName: file.name,
       });
     }
@@ -44,6 +47,7 @@ export const BackgroundPanel: React.FC<BackgroundPanelProps> = ({ background, on
       ...background,
       source: 'color',
       value: '#050508',
+      gradient: undefined,
       customFileName: undefined,
     });
     if (imageInputRef.current) {
@@ -57,6 +61,7 @@ export const BackgroundPanel: React.FC<BackgroundPanelProps> = ({ background, on
       ...background,
       source: 'color',
       value: '#050508',
+      gradient: undefined,
       customFileName: undefined,
     });
     if (videoInputRef.current) {
@@ -64,10 +69,28 @@ export const BackgroundPanel: React.FC<BackgroundPanelProps> = ({ background, on
     }
   };
 
-  const solidColors = ['#050508', '#0b1329', '#09231f', '#240e1b', '#261d0a', '#1b1c20'];
-
   const isImageActive = background.source === 'image' && !!background.value;
   const isVideoActive = background.source === 'video' && !!background.value;
+
+  const handleSolidColorChange = (hex: string) => {
+    onChange({
+      ...background,
+      source: 'color',
+      value: hex,
+      gradient: undefined,
+      customFileName: undefined,
+    });
+  };
+
+  const handleGradientChange = (grad: GradientConfig) => {
+    onChange({
+      ...background,
+      source: 'gradient',
+      value: grad.colors[0] || '#1e0b36',
+      gradient: grad,
+      customFileName: undefined,
+    });
+  };
 
   return (
     <div className="space-y-4 text-white">
@@ -163,18 +186,38 @@ export const BackgroundPanel: React.FC<BackgroundPanelProps> = ({ background, on
         </div>
         <div className="grid grid-cols-3 gap-2">
           {BACKGROUND_PRESETS.map((preset) => {
-            const isSelected = background.source === 'color' && background.value === preset.previewColor;
+            const isSelected = preset.gradientConfig
+              ? background.source === 'gradient' &&
+                background.gradient?.colors?.join(',') === preset.gradientConfig.colors.join(',') &&
+                Boolean(background.gradient?.animated) === Boolean(preset.gradientConfig.animated)
+              : background.source === 'color' &&
+                background.value.toLowerCase() === preset.previewColor.toLowerCase();
+
             return (
               <button
                 key={preset.id}
-                onClick={() =>
-                  onChange({
-                    ...background,
-                    source: 'color',
-                    value: preset.previewColor,
-                    customFileName: undefined,
-                  })
-                }
+                onClick={() => {
+                  if (preset.gradientConfig) {
+                    onChange({
+                      ...background,
+                      source: 'gradient',
+                      value: preset.previewColor,
+                      gradient: {
+                        ...preset.gradientConfig,
+                        colors: [...preset.gradientConfig.colors],
+                      },
+                      customFileName: undefined,
+                    });
+                  } else {
+                    onChange({
+                      ...background,
+                      source: 'color',
+                      value: preset.previewColor,
+                      gradient: undefined,
+                      customFileName: undefined,
+                    });
+                  }
+                }}
                 aria-label={preset.name}
                 className={`relative h-12 rounded-xl overflow-hidden border-2 transition-all p-1.5 text-left flex flex-col justify-end ${
                   isSelected
@@ -183,6 +226,9 @@ export const BackgroundPanel: React.FC<BackgroundPanelProps> = ({ background, on
                 }`}
                 style={{ background: preset.gradient }}
               >
+                {preset.gradientConfig?.animated && (
+                  <Sparkles className="w-2.5 h-2.5 text-amber-300 absolute top-1.5 right-1.5" />
+                )}
                 <span className="text-[10px] font-medium text-white/90 truncate">
                   {preset.name}
                 </span>
@@ -192,38 +238,15 @@ export const BackgroundPanel: React.FC<BackgroundPanelProps> = ({ background, on
         </div>
       </div>
 
-      {/* Solid colors palette */}
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between text-[11px] font-medium text-neutral-400 px-1">
-          <span className="flex items-center gap-1.5">
-            <Palette className="w-3 h-3 text-amber-400" />
-            <span>Teintes unies</span>
-          </span>
-        </div>
-        <div className="flex items-center justify-between gap-2">
-          {solidColors.map((color) => {
-            const isSelected = background.source === 'color' && background.value === color;
-            return (
-              <button
-                key={color}
-                onClick={() =>
-                  onChange({
-                    ...background,
-                    source: 'color',
-                    value: color,
-                    customFileName: undefined,
-                  })
-                }
-                aria-label={`Couleur ${color}`}
-                className={`flex-1 h-8 rounded-lg border-2 transition-transform ${
-                  isSelected ? 'border-amber-400 scale-105' : 'border-neutral-800'
-                }`}
-                style={{ backgroundColor: color }}
-              />
-            );
-          })}
-        </div>
-      </div>
+      {/* Free Color & Animated Gradient Palette */}
+      <ColorPalettePicker
+        mode={background.source === 'gradient' ? 'gradient' : 'solid'}
+        color={background.source === 'color' ? background.value : '#050508'}
+        gradient={background.gradient}
+        label="Couleur & Dégradé libre"
+        onChangeSolid={handleSolidColorChange}
+        onChangeGradient={handleGradientChange}
+      />
 
       {/* Dark overlay opacity slider for text legibility */}
       <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800 space-y-2">

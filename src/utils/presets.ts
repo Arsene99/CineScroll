@@ -1,46 +1,102 @@
+import { GradientConfig } from '../types';
+
 export interface BackgroundPreset {
   id: string;
   name: string;
   gradient: string;
   previewColor: string;
   accent: string;
+  gradientConfig?: GradientConfig;
 }
+
+export const QUICK_COLOR_SWATCHES: string[] = [
+  '#ffffff',
+  '#050508',
+  '#ec4899', // Rose vif
+  '#f472b6', // Rose pastel
+  '#8b5cf6', // Violet
+  '#4c1d95', // Pourpre sombre
+  '#6366f1', // Indigo
+  '#38bdf8', // Cyan
+  '#10b981', // Émeraude
+  '#fbbf24', // Doré
+  '#fb7185', // Corail
+  '#ef4444', // Rouge cinéma
+];
+
+export const GRADIENT_PRESETS: Array<{ id: string; name: string; gradient: GradientConfig }> = [
+  {
+    id: 'velvet-purple',
+    name: 'Velours Pourpre',
+    gradient: { colors: ['#2e1065', '#7e22ce', '#ec4899'], angle: 135, animated: true, animationSpeed: 1 },
+  },
+  {
+    id: 'neon-rose',
+    name: 'Rose Néon',
+    gradient: { colors: ['#f472b6', '#a855f7', '#6366f1'], angle: 120, animated: true, animationSpeed: 1 },
+  },
+  {
+    id: 'aurora',
+    name: 'Aurore Boréale',
+    gradient: { colors: ['#042f2e', '#0d9488', '#6366f1'], angle: 150, animated: true, animationSpeed: 1 },
+  },
+  {
+    id: 'sunset-film',
+    name: 'Coucher de Soleil',
+    gradient: { colors: ['#7c2d12', '#db2777', '#4c1d95'], angle: 145, animated: false, animationSpeed: 1 },
+  },
+  {
+    id: 'gold-obsidian',
+    name: 'Or & Obsidienne',
+    gradient: { colors: ['#fbbf24', '#f59e0b', '#fef3c7'], angle: 90, animated: false, animationSpeed: 1 },
+  },
+  {
+    id: 'cyber-ocean',
+    name: 'Océan Cyber',
+    gradient: { colors: ['#090d16', '#1e3a8a', '#06b6d4'], angle: 165, animated: true, animationSpeed: 1 },
+  },
+];
 
 export const BACKGROUND_PRESETS: BackgroundPreset[] = [
   {
     id: 'deep-space',
     name: 'Espace Profond',
-    gradient: 'linear-gradient(180deg, #050508 0%, #0c0d1b 50%, #020204 100%)',
+    gradient: 'linear-gradient(180deg, #050508 0%, #14163b 50%, #020204 100%)',
     previewColor: '#0a0b16',
     accent: '#6366f1',
+    gradientConfig: { colors: ['#050508', '#14163b', '#020204'], angle: 180, animated: false, animationSpeed: 1 },
+  },
+  {
+    id: 'velvet-violet',
+    name: 'Nuit Pourpre',
+    gradient: 'linear-gradient(135deg, #1e0b36 0%, #581c87 50%, #11051f 100%)',
+    previewColor: '#2e1065',
+    accent: '#c084fc',
+    gradientConfig: { colors: ['#1e0b36', '#581c87', '#11051f'], angle: 135, animated: false, animationSpeed: 1 },
+  },
+  {
+    id: 'cyber-neon',
+    name: 'Néon Rose',
+    gradient: 'linear-gradient(135deg, #1b0529 0%, #701a75 50%, #090314 100%)',
+    previewColor: '#3b0764',
+    accent: '#ec4899',
+    gradientConfig: { colors: ['#1b0529', '#701a75', '#090314'], angle: 135, animated: true, animationSpeed: 1 },
   },
   {
     id: 'golden-noir',
     name: 'Noir & Or',
-    gradient: 'linear-gradient(180deg, #120f0a 0%, #1c150c 50%, #0a0805 100%)',
+    gradient: 'linear-gradient(180deg, #120f0a 0%, #2d1f0d 50%, #0a0805 100%)',
     previewColor: '#17120a',
     accent: '#d97706',
-  },
-  {
-    id: 'cyber-neon',
-    name: 'Cyberpunk',
-    gradient: 'linear-gradient(180deg, #090314 0%, #19082d 50%, #05010b 100%)',
-    previewColor: '#120521',
-    accent: '#ec4899',
+    gradientConfig: { colors: ['#120f0a', '#2d1f0d', '#0a0805'], angle: 180, animated: false, animationSpeed: 1 },
   },
   {
     id: 'emerald-cinematic',
     name: 'Émeraude 35mm',
-    gradient: 'linear-gradient(180deg, #030d0a 0%, #091c16 50%, #020705 100%)',
+    gradient: 'linear-gradient(180deg, #030d0a 0%, #0a2e23 50%, #020705 100%)',
     previewColor: '#061611',
     accent: '#10b981',
-  },
-  {
-    id: 'minimal-slate',
-    name: 'Studio Ardoise',
-    gradient: 'linear-gradient(180deg, #0f172a 0%, #1e293b 50%, #020617 100%)',
-    previewColor: '#141d2e',
-    accent: '#38bdf8',
+    gradientConfig: { colors: ['#030d0a', '#0a2e23', '#020705'], angle: 180, animated: false, animationSpeed: 1 },
   },
   {
     id: 'pure-black',
