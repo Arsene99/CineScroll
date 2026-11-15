@@ -22,6 +22,13 @@ interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   videoElement: HTMLVideoElement | null;
+  filePrefix?: string;
+  customDrawFrame?: (
+    ctx: CanvasRenderingContext2D,
+    timeSec: number,
+    bgMedia: HTMLImageElement | HTMLVideoElement | null,
+    cachedBackground: HTMLCanvasElement | null
+  ) => void;
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
@@ -29,6 +36,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   isOpen,
   onClose,
   videoElement,
+  filePrefix = 'cinescroll',
+  customDrawFrame,
 }) => {
   const [selectedFormat, setSelectedFormat] = useState<ExportFormat>('mp4');
   const [selectedResolution, setSelectedResolution] = useState<ExportResolution>('720p');
@@ -41,6 +50,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [actualFormat, setActualFormat] = useState<string>('mp4');
   const [actualSizeBytes, setActualSizeBytes] = useState<number>(0);
+  const [actualWidth, setActualWidth] = useState<number>(0);
+  const [actualHeight, setActualHeight] = useState<number>(0);
+  const [usedResolutionFallback, setUsedResolutionFallback] = useState(false);
   const [renderTimeMs, setRenderTimeMs] = useState<number>(0);
   const [exportError, setExportError] = useState<string | null>(null);
 
@@ -99,10 +111,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     setDownloadUrl(null);
     setExportError(null);
     setActualSizeBytes(0);
+    setActualWidth(0);
+    setActualHeight(0);
+    setUsedResolutionFallback(false);
     setRenderTimeMs(0);
 
     const signal = { cancelled: false };
     exportSignalRef.current = signal;
+    let cachedBackground: HTMLCanvasElement | null = null;
 
     try {
       const parsedLines = parseCreditsText(config.text);
@@ -128,7 +144,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         }
       }
 
-      const cachedBackground = createStaticBackgroundCache(
+      cachedBackground = createStaticBackgroundCache(
         currentDims.width,
         currentDims.height,
         config,
@@ -148,10 +164,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         bgVideo: config.background.source === 'video' ? videoElement : null,
         signal,
         drawFrame: (ctx, timeSec) => {
-          renderCreditsFrame(ctx, config, timeSec, parsedLines, bgImage || videoElement, {
-            cachedBackground,
-            fastShadow: true,
-          });
+          if (customDrawFrame) {
+            customDrawFrame(ctx, timeSec, bgImage || videoElement, cachedBackground);
+          } else {
+            renderCreditsFrame(ctx, config, timeSec, parsedLines, bgImage || videoElement, {
+              cachedBackground,
+              fastShadow: true,
+            });
+          }
         },
         onProgress: (pct, renderedSec, statusText) => {
           if (!signal.cancelled) {
@@ -167,6 +187,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       const url = URL.createObjectURL(result.blob);
       setActualFormat(result.format);
       setActualSizeBytes(result.blob.size);
+      setActualWidth(result.actualWidth);
+      setActualHeight(result.actualHeight);
+      setUsedResolutionFallback(Boolean(result.usedResolutionFallback));
       setRenderTimeMs(result.renderDurationMs);
       setDownloadUrl(url);
       setIsExporting(false);
@@ -184,6 +207,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       }
       setExportError('Erreur lors de la génération vidéo. Essayez un autre format ou qualité.');
       setIsExporting(false);
+    } finally {
+      if (cachedBackground) {
+        cachedBackground.width = 0;
+        cachedBackground.height = 0;
+        cachedBackground = null;
+      }
     }
   };
 
@@ -192,7 +221,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       try {
         const response = await fetch(downloadUrl);
         const blob = await response.blob();
-        const filename = `cinescroll-${selectedResolution}.${actualFormat}`;
+        const filename = `${filePrefix}-${selectedResolution}.${actualFormat}`;
         const file = new File([blob], filename, { type: blob.type });
         await navigator.share({
           files: [file],
@@ -465,8 +494,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               Vidéo prête !
             </span>
             <span className="text-xs text-neutral-400 text-center font-mono">
-              {currentDims.width}×{currentDims.height} • {selectedFps} i/s • {actualFormat.toUpperCase()} • {formatFileSize(actualSizeBytes)}
+              {actualWidth || currentDims.width}×{actualHeight || currentDims.height} • {selectedFps} i/s • {actualFormat.toUpperCase()} • {formatFileSize(actualSizeBytes)}
             </span>
+            {usedResolutionFallback && (
+              <span className="text-[10px] text-amber-400 text-center px-2">
+                Résolution adaptée automatiquement aux limites de l&apos;appareil pour éviter un arrêt mémoire.
+              </span>
+            )}
             {renderTimeMs > 0 && (
               <span className="text-[11px] text-emerald-400 font-medium">
                 Généré en {(renderTimeMs / 1000).toFixed(1)}s
@@ -496,7 +530,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <div className="grid grid-cols-2 gap-2">
                 <a
                   href={downloadUrl}
-                  download={`cinescroll-${selectedResolution}-${Date.now()}.${actualFormat}`}
+                  download={`${filePrefix}-${selectedResolution}-${Date.now()}.${actualFormat}`}
                   className="py-3 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg active:scale-98"
                 >
                   <Download className="w-4 h-4" />

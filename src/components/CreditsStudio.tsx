@@ -196,6 +196,7 @@ export const CreditsStudio: React.FC<CreditsStudioProps> = ({ onBack }) => {
         <PreviewCanvas
           config={config}
           isPlaying={isPlaying}
+          paused={showExportModal}
           onTogglePlay={handleTogglePlay}
           currentTime={currentTime}
           onSeek={handleSeek}

@@ -57,6 +57,31 @@ export interface SubtitleItem {
   text: string;
 }
 
+export type SubtitlePosition = 'bottom' | 'center' | 'top';
+
+export type SubtitleBoxStyle = 'pill-dark' | 'shadow' | 'outline';
+
+export interface SubtitleCueEvent {
+  id: string;
+  time: number; // timestamp in seconds when state changes
+  lineIndex: number | null; // index into parsed script lines, or null to hide text on screen
+}
+
+export interface SubtitlesStudioConfig {
+  rawText: string;
+  cues: SubtitleCueEvent[];
+  fontFamily: string;
+  fontSize: number;
+  color: string;
+  textGradient?: GradientConfig;
+  position: SubtitlePosition;
+  boxStyle: SubtitleBoxStyle;
+  durationSec: number;
+  background: BackgroundConfig;
+  audio: AudioConfig;
+  aspectRatio: AspectRatio;
+}
+
 export interface SubtitlesConfig {
   subtitles: SubtitleItem[];
   fontFamily: string;

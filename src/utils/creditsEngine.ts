@@ -578,7 +578,7 @@ export function renderCreditsFrame(
 
   // 1 & 2 & 3. Background (fast cached blit during export, or live render)
   if (options?.cachedBackground) {
-    ctx.drawImage(options.cachedBackground, 0, 0);
+    ctx.drawImage(options.cachedBackground, 0, 0, width, height);
   } else {
     ctx.clearRect(0, 0, width, height);
 

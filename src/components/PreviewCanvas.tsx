@@ -12,6 +12,7 @@ import {
 interface PreviewCanvasProps {
   config: CreditsConfig;
   isPlaying: boolean;
+  paused?: boolean;
   onTogglePlay: () => void;
   currentTime: number;
   onSeek: (time: number) => void;
@@ -22,6 +23,7 @@ interface PreviewCanvasProps {
 export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
   config,
   isPlaying,
+  paused = false,
   onTogglePlay,
   currentTime,
   onSeek,
@@ -85,7 +87,7 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
       (config.background.source === 'gradient' && Boolean(config.background.gradient?.animated)) ||
       Boolean(config.textGradient?.animated);
 
-    if (hasAnimatedGradient && !isPlaying && currentTime === 0) {
+    if (hasAnimatedGradient && !isPlaying && !paused && currentTime === 0) {
       let rafId = 0;
       const startMs = performance.now();
       let lastDrawMs = -100;
@@ -135,7 +137,7 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
     }
 
     renderCreditsFrame(ctx, config, currentTime, parsedLines, bgMedia);
-  }, [config, currentTime, isPlaying, videoElementRef, onCanvasReady]);
+  }, [config, currentTime, isPlaying, paused, videoElementRef, onCanvasReady]);
 
   // Handle scrubber change
   const handleScrub = (e: React.ChangeEvent<HTMLInputElement>) => {

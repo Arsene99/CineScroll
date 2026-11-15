@@ -3,17 +3,44 @@ import { X, Check } from 'lucide-react';
 import { CreditsConfig } from '../../types';
 
 interface FullscreenTextEditorProps {
-  config: CreditsConfig;
-  onChange: (updated: Partial<CreditsConfig>) => void;
+  config?: CreditsConfig;
+  onChange?: (updated: Partial<CreditsConfig>) => void;
+  text?: string;
+  onChangeText?: (value: string) => void;
+  title?: string;
+  placeholder?: string;
+  unitLabel?: string;
   onClose: () => void;
 }
 
 export const FullscreenTextEditor: React.FC<FullscreenTextEditorProps> = ({
   config,
   onChange,
+  text,
+  onChangeText,
+  title = 'Édition du Texte',
+  placeholder = `Écrivez directement votre texte ici...
+Exemple:
+# TITRE DU FILM
+UN FILM DE
+Jean-Luc Vasseur
+
+RÉALISATION : Alexandre Dumas
+IMAGE : Marie Curie
+
+FIN`,
+  unitLabel = 'lignes',
   onClose,
 }) => {
-  const linesCount = config.text.split('\n').filter((l) => l.trim().length > 0).length;
+  const value = text ?? config?.text ?? '';
+  const handleChange = (nextVal: string) => {
+    if (onChangeText) {
+      onChangeText(nextVal);
+    } else if (onChange) {
+      onChange({ text: nextVal });
+    }
+  };
+  const linesCount = value.split(/\r?\n/).filter((l) => l.trim().length > 0).length;
 
   return (
     <div className="fixed inset-0 z-50 bg-neutral-950 flex flex-col text-white animate-in fade-in duration-200">
@@ -29,10 +56,10 @@ export const FullscreenTextEditor: React.FC<FullscreenTextEditorProps> = ({
           </button>
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-neutral-200">
-              Édition du Texte
+              {title}
             </div>
             <div className="text-[10px] font-mono text-neutral-400">
-              {linesCount} lignes
+              {linesCount} {unitLabel}
             </div>
           </div>
         </div>
@@ -50,19 +77,10 @@ export const FullscreenTextEditor: React.FC<FullscreenTextEditorProps> = ({
       {/* Pure Fullscreen Text Area - Occupies the entire space with zero clutter */}
       <main className="flex-1 relative flex flex-col overflow-hidden bg-neutral-950">
         <textarea
-          value={config.text}
-          onChange={(e) => onChange({ text: e.target.value })}
-          aria-label="Contenu complet du générique"
-          placeholder="Écrivez directement votre texte ici...
-Exemple:
-# TITRE DU FILM
-UN FILM DE
-Jean-Luc Vasseur
-
-RÉALISATION : Alexandre Dumas
-IMAGE : Marie Curie
-
-FIN"
+          value={value}
+          onChange={(e) => handleChange(e.target.value)}
+          aria-label={title}
+          placeholder={placeholder}
           className="w-full h-full bg-transparent border-0 outline-none focus:outline-none focus:ring-0 p-4 sm:p-6 text-sm sm:text-base font-mono leading-relaxed text-neutral-100 placeholder:text-neutral-600 resize-none overflow-y-auto selection:bg-amber-500/30"
           style={{ fontFamily: 'monospace' }}
           autoFocus
