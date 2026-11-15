@@ -150,6 +150,7 @@ export class AudioEngine {
   private ctx: AudioContext | null = null;
   private isPlaying = false;
   private currentPresetId = 'cinema-epic';
+  private currentVolume = 0.6;
   private customAudio: HTMLAudioElement | null = null;
   private customSourceNode: MediaElementAudioSourceNode | null = null;
   private gainNode: GainNode | null = null;
@@ -161,21 +162,23 @@ export class AudioEngine {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.ctx = new AudioCtx();
       this.gainNode = this.ctx.createGain();
+      this.gainNode.gain.setValueAtTime(this.currentVolume, this.ctx.currentTime);
       this.destNode = this.ctx.createMediaStreamDestination();
       this.gainNode.connect(this.ctx.destination);
       this.gainNode.connect(this.destNode);
     }
     if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
     }
   }
 
   public setVolume(val: number) {
+    this.currentVolume = Math.max(0, Math.min(1, val));
     if (this.gainNode && this.ctx) {
-      this.gainNode.gain.setValueAtTime(Math.max(0, Math.min(1, val)), this.ctx.currentTime);
+      this.gainNode.gain.setValueAtTime(this.currentVolume, this.ctx.currentTime);
     }
     if (this.customAudio) {
-      this.customAudio.volume = Math.max(0, Math.min(1, val));
+      this.customAudio.volume = this.currentVolume;
     }
   }
 
@@ -194,7 +197,9 @@ export class AudioEngine {
       this.customAudio.src = '';
     }
     this.customAudio = new Audio(url);
+    this.customAudio.preload = 'auto';
     this.customAudio.loop = true;
+    this.customAudio.volume = this.currentVolume;
     if (this.ctx && this.gainNode) {
       try {
         this.customSourceNode = this.ctx.createMediaElementSource(this.customAudio);
@@ -206,14 +211,65 @@ export class AudioEngine {
     this.currentPresetId = 'custom';
   }
 
+  public getOutputLatencySec(): number {
+    if (!this.ctx) return 0;
+    const base = Number.isFinite(this.ctx.baseLatency) ? this.ctx.baseLatency : 0;
+    const output = Number.isFinite((this.ctx as AudioContext & { outputLatency?: number }).outputLatency)
+      ? ((this.ctx as AudioContext & { outputLatency?: number }).outputLatency ?? 0)
+      : 0;
+    return Math.max(0, Math.min(0.25, base + output));
+  }
+
+  public getCustomAudioClock(): {
+    active: boolean;
+    ready: boolean;
+    mediaTime: number;
+    mediaDuration: number;
+    outputLatencySec: number;
+  } {
+    if (this.currentPresetId !== 'custom' || !this.customAudio) {
+      return {
+        active: false,
+        ready: false,
+        mediaTime: 0,
+        mediaDuration: 0,
+        outputLatencySec: 0,
+      };
+    }
+    const audio = this.customAudio;
+    const dur = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+    const ctxRunning = !this.ctx || this.ctx.state === 'running';
+    const ready = ctxRunning && !audio.paused && !audio.seeking && audio.readyState >= 2;
+    return {
+      active: true,
+      ready,
+      mediaTime: audio.currentTime || 0,
+      mediaDuration: dur,
+      outputLatencySec: this.getOutputLatencySec(),
+    };
+  }
+
   public play(startTimeSec = 0) {
     this.init();
     if (!this.ctx) return;
     this.isPlaying = true;
 
     if (this.currentPresetId === 'custom' && this.customAudio) {
-      this.customAudio.currentTime = startTimeSec % (this.customAudio.duration || 100);
-      this.customAudio.play().catch(() => {});
+      const audio = this.customAudio;
+      const dur = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+      const targetPos = dur > 0 ? startTimeSec % dur : startTimeSec;
+      if (Math.abs((audio.currentTime || 0) - targetPos) > 0.015) {
+        audio.currentTime = targetPos;
+      }
+      if (this.ctx.state === 'suspended') {
+        this.ctx.resume().then(() => {
+          if (this.isPlaying && this.currentPresetId === 'custom') {
+            audio.play().catch(() => {});
+          }
+        }).catch(() => {});
+      } else {
+        audio.play().catch(() => {});
+      }
       return;
     }
 
@@ -221,8 +277,8 @@ export class AudioEngine {
       return;
     }
 
-    // Play synthesized preset sequence
-    this.startSynthLoop(this.currentPresetId);
+    // Play synthesized preset sequence aligned to startTimeSec phase
+    this.startSynthLoop(this.currentPresetId, startTimeSec);
   }
 
   public pause() {
@@ -242,7 +298,10 @@ export class AudioEngine {
 
   public seek(timeSec: number) {
     if (this.customAudio) {
-      this.customAudio.currentTime = timeSec % (this.customAudio.duration || 100);
+      const dur = Number.isFinite(this.customAudio.duration) && this.customAudio.duration > 0
+        ? this.customAudio.duration
+        : 0;
+      this.customAudio.currentTime = dur > 0 ? timeSec % dur : timeSec;
     }
   }
 
@@ -258,13 +317,13 @@ export class AudioEngine {
     }
   }
 
-  private startSynthLoop(presetId: string) {
+  private startSynthLoop(presetId: string, startTimeSec = 0) {
     this.stopSynthLoop();
     if (!this.ctx || !this.gainNode) return;
 
-    let step = 0;
     const chords = CHORD_NOTES_BY_PRESET[presetId] || CHORD_NOTES_BY_PRESET['cinema-epic'];
     const chordDuration = 3.2; // seconds per chord
+    let step = Math.floor(Math.max(0, startTimeSec) / chordDuration);
 
     const triggerChord = () => {
       if (!this.isPlaying || !this.ctx || !this.gainNode) return;

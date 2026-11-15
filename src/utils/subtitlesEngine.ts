@@ -56,7 +56,7 @@ export function getActiveCueAtTime(
   const sorted = sortCueEvents(cues);
   let active: SubtitleCueEvent | null = null;
   for (const cue of sorted) {
-    if (cue.time <= timeSec + 0.01) {
+    if (cue.time <= timeSec + 0.018) {
       active = cue;
     } else {
       break;

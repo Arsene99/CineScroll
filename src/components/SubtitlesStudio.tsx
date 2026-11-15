@@ -35,6 +35,12 @@ import {
   undoLastCueAndRewind,
 } from '../utils/subtitlesEngine';
 import { globalAudioEngine } from '../utils/audioSynth';
+import {
+  advanceSyncedClock,
+  createSyncedClockState,
+  MediaClockSnapshot,
+  SyncedClockState,
+} from '../utils/syncClock';
 import { Toolbar, ActiveTab } from './Toolbar';
 import { SubtitleStyleToolbar, SubtitleToolId } from './SubtitleStyleToolbar';
 import { FullscreenTextEditor } from './panels/FullscreenTextEditor';
@@ -88,6 +94,7 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
   const currentTimeRef = useRef(0);
   const isPlayingRef = useRef(false);
   const cuesRef = useRef(config.cues);
+  const syncedClockRef = useRef<SyncedClockState>(createSyncedClockState(0, 0));
 
   currentTimeRef.current = currentTime;
   isPlayingRef.current = isPlaying;
@@ -135,15 +142,54 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
     }
   }, [isPlaying, config.background.source]);
 
-  // Accurate delta-time playback loop
+  const getMasterClockSnapshot = useCallback((): MediaClockSnapshot => {
+    const audioClock = globalAudioEngine.getCustomAudioClock();
+    if (
+      audioClock.active &&
+      !config.audio.muted &&
+      config.audio.volume > 0 &&
+      config.audio.presetId === 'custom'
+    ) {
+      return audioClock;
+    }
+    const video = videoElementRef.current;
+    if (config.background.source === 'video' && video) {
+      const dur = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+      const ready = !video.paused && !video.seeking && video.readyState >= 2;
+      return {
+        active: true,
+        ready,
+        mediaTime: video.currentTime || 0,
+        mediaDuration: dur,
+        outputLatencySec: 0,
+      };
+    }
+    return {
+      active: false,
+      ready: true,
+      mediaTime: 0,
+      mediaDuration: 0,
+      outputLatencySec: 0,
+    };
+  }, [config.audio.muted, config.audio.presetId, config.audio.volume, config.background.source]);
+
+  // Audio-locked playback loop (eliminates startup buffer & latency drift vs export)
   const step = useCallback(
     (timestamp: number) => {
       if (!lastTimeRef.current) lastTimeRef.current = timestamp;
-      const delta = (timestamp - lastTimeRef.current) / 1000;
+      const wallDelta = (timestamp - lastTimeRef.current) / 1000;
       lastTimeRef.current = timestamp;
 
-      const next = currentTimeRef.current + delta;
-      if (next >= config.durationSec) {
+      const snapshot = getMasterClockSnapshot();
+      const { nextState, nextTimelineTime, reachedEnd } = advanceSyncedClock(
+        syncedClockRef.current,
+        snapshot,
+        wallDelta,
+        config.durationSec
+      );
+      syncedClockRef.current = nextState;
+
+      if (reachedEnd) {
         currentTimeRef.current = config.durationSec;
         setCurrentTime(config.durationSec);
         setIsPlaying(false);
@@ -155,21 +201,25 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
         return;
       }
 
-      currentTimeRef.current = next;
-      setCurrentTime(next);
+      if (nextTimelineTime !== currentTimeRef.current) {
+        currentTimeRef.current = nextTimelineTime;
+        setCurrentTime(nextTimelineTime);
+      }
 
       if (isPlayingRef.current) {
         animationFrameIdRef.current = requestAnimationFrame(step);
       }
     },
-    [config.durationSec]
+    [config.durationSec, getMasterClockSnapshot]
   );
 
   useEffect(() => {
     if (isPlaying) {
       lastTimeRef.current = null;
-      animationFrameIdRef.current = requestAnimationFrame(step);
       globalAudioEngine.play(currentTimeRef.current);
+      const snap = getMasterClockSnapshot();
+      syncedClockRef.current = createSyncedClockState(currentTimeRef.current, snap.mediaTime);
+      animationFrameIdRef.current = requestAnimationFrame(step);
     } else {
       if (animationFrameIdRef.current) {
         cancelAnimationFrame(animationFrameIdRef.current);
@@ -182,9 +232,9 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
         cancelAnimationFrame(animationFrameIdRef.current);
       }
     };
-  }, [isPlaying, step]);
+  }, [isPlaying, step, getMasterClockSnapshot]);
 
-  // Sync background video time when seeking while paused or jumping
+  // Sync background video & audio clock cleanly when seeking, rewinding, or undoing
   const seekAllMedia = useCallback(
     (targetTime: number) => {
       const clamped = Math.max(0, Math.min(config.durationSec, targetTime));
@@ -197,8 +247,10 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
           video.currentTime = clamped % video.duration;
         } catch {}
       }
+      const snap = getMasterClockSnapshot();
+      syncedClockRef.current = createSyncedClockState(clamped, snap.mediaTime);
     },
-    [config.durationSec, config.background.source]
+    [config.durationSec, config.background.source, getMasterClockSnapshot]
   );
 
   const handleTogglePlay = () => {

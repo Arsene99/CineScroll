@@ -338,7 +338,7 @@ async function encodeWithVideoCandidate(
 
       options.drawFrame(ctx, frameTime);
 
-      const timestampUs = frameIdx * frameDurationUs;
+      const timestampUs = Math.round((frameIdx / fps) * 1_000_000);
       const videoFrame = new VideoFrame(canvas, {
         timestamp: timestampUs,
         duration: frameDurationUs,
