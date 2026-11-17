@@ -367,3 +367,14 @@ export class AudioEngine {
 }
 
 export const globalAudioEngine = new AudioEngine();
+
+export function syncAudioEngineWithConfig(audio: AudioConfig): void {
+  globalAudioEngine.stop();
+  globalAudioEngine.setVolume(audio.muted ? 0 : audio.volume);
+  if (audio.presetId === 'custom' && audio.customFileUrl) {
+    globalAudioEngine.setCustomAudio(audio.customFileUrl);
+  } else {
+    globalAudioEngine.setPreset(audio.presetId);
+  }
+}
+

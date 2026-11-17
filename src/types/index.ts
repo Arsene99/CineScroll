@@ -92,3 +92,35 @@ export interface SubtitlesConfig {
   audio: AudioConfig;
   aspectRatio: AspectRatio;
 }
+
+export type SavedProjectKind = 'credits' | 'subtitles';
+
+export interface SavedProjectMediaKeys {
+  bgBlobKey?: string;
+  audioBlobKey?: string;
+}
+
+export interface SavedProject {
+  id: string;
+  name: string;
+  kind: SavedProjectKind;
+  createdAt: number;
+  updatedAt: number;
+  creditsConfig?: CreditsConfig;
+  subtitlesConfig?: SubtitlesStudioConfig;
+  mediaKeys?: SavedProjectMediaKeys;
+  isDraft?: boolean;
+  sourceProjectId?: string;
+}
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  kind: SavedProjectKind;
+  updatedAt: number;
+  aspectRatio: AspectRatio;
+  lineCount: number;
+  cueCount: number;
+  hasCustomMedia: boolean;
+}
+

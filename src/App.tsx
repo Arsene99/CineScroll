@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react';
-import { StudioMode } from './types';
+import { useState, useEffect, useCallback } from 'react';
+import { SavedProject, StudioMode } from './types';
 import { ModeSelector } from './components/ModeSelector';
 import { CreditsStudio } from './components/CreditsStudio';
 import { SubtitlesStudio } from './components/SubtitlesStudio';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { globalAudioEngine, syncAudioEngineWithConfig } from './utils/audioSynth';
 
 export default function App() {
   const [mode, setMode] = useState<StudioMode>('selection');
+  const [activeProject, setActiveProject] = useState<SavedProject | null>(null);
+  const [sessionKey, setSessionKey] = useState(0);
 
   // Support ?autostart=1 or ?mode=credits for testing / direct load
   useEffect(() => {
@@ -42,18 +45,59 @@ export default function App() {
     }
   }, []);
 
+  const handleSelectMode = useCallback((selected: StudioMode) => {
+    globalAudioEngine.stop();
+    setActiveProject(null);
+    setSessionKey((k) => k + 1);
+    setMode(selected);
+  }, []);
+
+  const handleOpenSavedProject = useCallback((project: SavedProject) => {
+    const audioCfg =
+      project.kind === 'credits'
+        ? project.creditsConfig?.audio
+        : project.subtitlesConfig?.audio;
+    if (audioCfg) {
+      syncAudioEngineWithConfig(audioCfg);
+    } else {
+      globalAudioEngine.stop();
+    }
+    setActiveProject(project);
+    setSessionKey((k) => k + 1);
+    setMode(project.kind);
+  }, []);
+
+  const handleBackToHome = useCallback(() => {
+    globalAudioEngine.stop();
+    setActiveProject(null);
+    setMode('selection');
+  }, []);
+
   return (
     <div className="w-full min-h-screen bg-black text-white selection:bg-amber-500/30 selection:text-amber-200">
       {mode === 'selection' && (
-        <ModeSelector onSelectMode={(selected) => setMode(selected)} />
+        <ModeSelector
+          onSelectMode={handleSelectMode}
+          onOpenSavedProject={handleOpenSavedProject}
+        />
       )}
 
       {mode === 'credits' && (
-        <CreditsStudio onBack={() => setMode('selection')} />
+        <CreditsStudio
+          key={`credits-${sessionKey}`}
+          initialProject={activeProject?.kind === 'credits' ? activeProject : null}
+          onOpenSavedProject={handleOpenSavedProject}
+          onBack={handleBackToHome}
+        />
       )}
 
       {mode === 'subtitles' && (
-        <SubtitlesStudio onBack={() => setMode('selection')} />
+        <SubtitlesStudio
+          key={`subtitles-${sessionKey}`}
+          initialProject={activeProject?.kind === 'subtitles' ? activeProject : null}
+          onOpenSavedProject={handleOpenSavedProject}
+          onBack={handleBackToHome}
+        />
       )}
 
       {/* Global PWA Offline indicator */}

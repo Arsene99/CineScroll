@@ -13,9 +13,11 @@ import {
   Trash2,
   X,
   FileText,
+  Save,
 } from 'lucide-react';
 import {
   CreditsConfig,
+  SavedProject,
   SubtitlesStudioConfig,
 } from '../types';
 import {
@@ -34,7 +36,7 @@ import {
   stampNextLineCue,
   undoLastCueAndRewind,
 } from '../utils/subtitlesEngine';
-import { globalAudioEngine } from '../utils/audioSynth';
+import { globalAudioEngine, syncAudioEngineWithConfig } from '../utils/audioSynth';
 import {
   advanceSyncedClock,
   createSyncedClockState,
@@ -49,34 +51,61 @@ import { AudioPanel } from './panels/AudioPanel';
 import { RatioPanel } from './panels/RatioPanel';
 import { ExportModal } from './panels/ExportModal';
 import { PWAInstallButton } from './PWAInstallButton';
+import { ProjectSaveLoadSheet } from './ProjectSaveLoadSheet';
+import { cloneSubtitlesConfig, projectRepository } from '../utils/projectStorage';
 
 interface SubtitlesStudioProps {
   onBack: () => void;
+  initialProject?: SavedProject | null;
+  onOpenSavedProject?: (project: SavedProject) => void;
 }
 
-export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
-  const [config, setConfig] = useState<SubtitlesStudioConfig>({
-    rawText: DEFAULT_SUBTITLES_SCRIPT,
-    cues: [],
-    fontFamily: 'Montserrat',
-    fontSize: 24,
-    color: '#ffffff',
-    position: 'bottom',
-    boxStyle: 'pill-dark',
-    durationSec: 25,
-    background: {
-      source: 'color',
-      value: '#050508',
-      overlayOpacity: 0,
-      blur: 0,
-    },
-    audio: {
-      presetId: 'cinema-epic',
-      volume: 0.6,
-      muted: false,
-    },
-    aspectRatio: '9:16',
+const createDefaultSubtitlesConfig = (): SubtitlesStudioConfig => ({
+  rawText: DEFAULT_SUBTITLES_SCRIPT,
+  cues: [],
+  fontFamily: 'Montserrat',
+  fontSize: 24,
+  color: '#ffffff',
+  position: 'bottom',
+  boxStyle: 'pill-dark',
+  durationSec: 25,
+  background: {
+    source: 'color',
+    value: '#050508',
+    overlayOpacity: 0,
+    blur: 0,
+  },
+  audio: {
+    presetId: 'cinema-epic',
+    volume: 0.6,
+    muted: false,
+  },
+  aspectRatio: '9:16',
+});
+
+export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({
+  onBack,
+  initialProject,
+  onOpenSavedProject,
+}) => {
+  const [config, setConfig] = useState<SubtitlesStudioConfig>(() =>
+    initialProject?.subtitlesConfig
+      ? cloneSubtitlesConfig(initialProject.subtitlesConfig)
+      : createDefaultSubtitlesConfig()
+  );
+
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(() => {
+    if (!initialProject) return null;
+    if (initialProject.isDraft) return initialProject.sourceProjectId ?? null;
+    return initialProject.id;
   });
+  const [activeProjectName, setActiveProjectName] = useState<string>(() => {
+    if (!initialProject) return '';
+    if (initialProject.isDraft) return initialProject.sourceProjectId ? initialProject.name : '';
+    return initialProject.name;
+  });
+  const [hasUnsavedEdits, setHasUnsavedEdits] = useState(false);
+  const [showProjectsSheet, setShowProjectsSheet] = useState(false);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>(null);
   const [activeStyleTool, setActiveStyleTool] = useState<SubtitleToolId>(null);
@@ -112,8 +141,50 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
   const nextLineText = nextLineIndex < lines.length ? lines[nextLineIndex] : null;
   const isAllLinesStamped = lines.length > 0 && nextLineIndex >= lines.length;
 
+  const hasEditedRef = useRef(false);
+
+  // Sync audio engine when hydrated from a saved project on mount
+  useEffect(() => {
+    if (initialProject?.subtitlesConfig) {
+      syncAudioEngineWithConfig(initialProject.subtitlesConfig.audio);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced auto-save draft
+  useEffect(() => {
+    if (!hasEditedRef.current) return;
+    const timer = window.setTimeout(() => {
+      projectRepository
+        .saveDraft(
+          'subtitles',
+          config,
+          activeProjectId || undefined,
+          activeProjectName || undefined
+        )
+        .catch(() => {});
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [config, activeProjectId, activeProjectName]);
+
   const handleConfigChange = (updated: Partial<SubtitlesStudioConfig>) => {
+    hasEditedRef.current = true;
+    setHasUnsavedEdits(true);
     setConfig((prev) => ({ ...prev, ...updated }));
+  };
+
+  const handleStartNewProject = () => {
+    setIsPlaying(false);
+    globalAudioEngine.stop();
+    const fresh = createDefaultSubtitlesConfig();
+    syncAudioEngineWithConfig(fresh.audio);
+    hasEditedRef.current = false;
+    setHasUnsavedEdits(false);
+    setActiveProjectId(null);
+    setActiveProjectName('');
+    currentTimeRef.current = 0;
+    setCurrentTime(0);
+    setConfig(fresh);
   };
 
   // Load background image when selected
@@ -268,6 +339,8 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
 
   // Core Video Lyrics Cueing Actions
   const handleStampNextLine = useCallback(() => {
+    hasEditedRef.current = true;
+    setHasUnsavedEdits(true);
     setConfig((prev) => {
       const scriptLines = parseSubtitleScript(prev.rawText);
       const res = stampNextLineCue(prev.cues, currentTimeRef.current, scriptLines.length);
@@ -276,6 +349,8 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
   }, []);
 
   const handleClearCurrentText = useCallback(() => {
+    hasEditedRef.current = true;
+    setHasUnsavedEdits(true);
     setConfig((prev) => ({
       ...prev,
       cues: stampClearCue(prev.cues, currentTimeRef.current),
@@ -285,6 +360,10 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
   const handleUndoAndRewind = useCallback(() => {
     const res = undoLastCueAndRewind(cuesRef.current, currentTimeRef.current, 1.5);
     cuesRef.current = res.cues;
+    if (res.removedCue) {
+      hasEditedRef.current = true;
+      setHasUnsavedEdits(true);
+    }
     setConfig((prev) => ({ ...prev, cues: res.cues }));
     if (res.removedCue) {
       seekAllMedia(res.rewindTime);
@@ -442,7 +521,7 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
         playsInline
         onLoadedMetadata={(e) => {
           const vidDur = e.currentTarget.duration;
-          if (Number.isFinite(vidDur) && vidDur > 1) {
+          if (hasEditedRef.current && Number.isFinite(vidDur) && vidDur > 1) {
             const clampedDur = Math.min(600, Math.max(5, Math.round(vidDur)));
             setConfig((prev) => ({ ...prev, durationSec: clampedDur }));
           }
@@ -451,34 +530,54 @@ export const SubtitlesStudio: React.FC<SubtitlesStudioProps> = ({ onBack }) => {
       />
 
       {/* 1. Compact Header matching CreditsStudio */}
-      <header className="flex-shrink-0 flex items-center justify-between px-4 py-2.5 bg-neutral-950 border-b border-neutral-900 z-30">
+      <header className="flex-shrink-0 flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5 bg-neutral-950 border-b border-neutral-900 z-30">
         <button
+          type="button"
           onClick={onBack}
           aria-label="Retour à l'accueil"
-          className="flex items-center justify-center w-10 h-10 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white active:scale-95 transition-all"
+          className="flex items-center justify-center w-10 h-10 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white active:scale-95 transition-all shrink-0"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
 
-        <div className="flex items-center gap-2 text-xs">
-          <span className="font-bold uppercase tracking-wider text-neutral-100 whitespace-nowrap">
-            Sous-titres
+        <div className="min-w-0 flex items-center justify-center gap-1.5 text-xs">
+          <span className="font-bold uppercase tracking-wider text-neutral-100 truncate max-w-[140px] sm:max-w-[220px]">
+            {activeProjectName || 'Sous-titres'}
           </span>
-          <span className="text-neutral-600" aria-hidden="true">
+          <span className="text-neutral-600 shrink-0" aria-hidden="true">
             ·
           </span>
-          <span className="font-mono text-amber-400 tabular-nums">{config.aspectRatio}</span>
+          <span className="font-mono text-amber-400 tabular-nums shrink-0">
+            {config.aspectRatio}
+          </span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <PWAInstallButton variant="compact" />
           <button
+            type="button"
+            onClick={() => {
+              setIsPlaying(false);
+              setShowProjectsSheet(true);
+            }}
+            aria-label="Enregistrer ou charger un projet"
+            title="Enregistrer ou charger un projet"
+            className={`relative flex items-center justify-center w-10 h-10 rounded-xl bg-neutral-900 border transition-all active:scale-95 ${
+              hasUnsavedEdits
+                ? 'border-amber-500/60 text-amber-400'
+                : 'border-neutral-800 text-neutral-300 hover:text-white'
+            }`}
+          >
+            <Save className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
             onClick={() => {
               setIsPlaying(false);
               setShowExportModal(true);
             }}
             aria-label="Exporter la vidéo sous-titrée"
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs active:scale-95 transition-all shadow-md shadow-amber-500/20 whitespace-nowrap"
+            className="flex items-center gap-1.5 h-10 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs active:scale-95 transition-all shadow-md shadow-amber-500/20 whitespace-nowrap"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Exporter</span>
@@ -927,6 +1026,35 @@ Troisième phrase...`}
           }
         />
       )}
+
+      {/* Local Save & Load Projects Sheet */}
+      <ProjectSaveLoadSheet
+        isOpen={showProjectsSheet}
+        mode="studio"
+        currentKind="subtitles"
+        currentSubtitlesConfig={config}
+        activeProjectId={activeProjectId}
+        activeProjectName={activeProjectName}
+        onClose={() => setShowProjectsSheet(false)}
+        onSaved={(saved) => {
+          hasEditedRef.current = false;
+          setActiveProjectId(saved.id);
+          setActiveProjectName(saved.name);
+          setHasUnsavedEdits(false);
+        }}
+        onLoadProject={(project) => {
+          if (onOpenSavedProject) {
+            onOpenSavedProject(project);
+          } else if (project.subtitlesConfig) {
+            setConfig(cloneSubtitlesConfig(project.subtitlesConfig));
+            syncAudioEngineWithConfig(project.subtitlesConfig.audio);
+            setActiveProjectId(project.id);
+            setActiveProjectName(project.name);
+            setHasUnsavedEdits(false);
+          }
+        }}
+        onStartNew={handleStartNewProject}
+      />
     </div>
   );
 };

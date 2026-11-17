@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ArrowLeft, Sparkles, Download, X } from 'lucide-react';
-import { CreditsConfig } from '../types';
+import { ArrowLeft, Sparkles, Download, X, Save } from 'lucide-react';
+import { CreditsConfig, SavedProject } from '../types';
 import { CREDIT_TEMPLATES } from '../utils/presets';
 import { PreviewCanvas } from './PreviewCanvas';
 import { Toolbar, ActiveTab } from './Toolbar';
@@ -10,39 +10,66 @@ import { AudioPanel } from './panels/AudioPanel';
 import { RatioPanel } from './panels/RatioPanel';
 import { ExportModal } from './panels/ExportModal';
 import { StudioTextToolbar, TextToolId } from './StudioTextToolbar';
-import { globalAudioEngine } from '../utils/audioSynth';
+import { globalAudioEngine, syncAudioEngineWithConfig } from '../utils/audioSynth';
 import { PWAInstallButton } from './PWAInstallButton';
+import { ProjectSaveLoadSheet } from './ProjectSaveLoadSheet';
+import { cloneCreditsConfig, projectRepository } from '../utils/projectStorage';
 
 interface CreditsStudioProps {
   onBack: () => void;
+  initialProject?: SavedProject | null;
+  onOpenSavedProject?: (project: SavedProject) => void;
 }
 
-export const CreditsStudio: React.FC<CreditsStudioProps> = ({ onBack }) => {
+const createDefaultCreditsConfig = (): CreditsConfig => ({
+  text: CREDIT_TEMPLATES[0].text,
+  fontFamily: 'Cinzel',
+  fontSize: 24,
+  color: '#ffffff',
+  alignment: 'center',
+  direction: 'bottom-to-top',
+  speedDuration: 25,
+  lineSpacing: 1.6,
+  roleSeparation: true,
+  textShadow: true,
+  background: {
+    source: 'color',
+    value: '#050508',
+    overlayOpacity: 0, // No artificial dimming by default
+    blur: 0,
+  },
+  audio: {
+    presetId: 'cinema-epic',
+    volume: 0.6,
+    muted: false,
+  },
+  aspectRatio: '9:16',
+});
+
+export const CreditsStudio: React.FC<CreditsStudioProps> = ({
+  onBack,
+  initialProject,
+  onOpenSavedProject,
+}) => {
   // Main credits configuration
-  const [config, setConfig] = useState<CreditsConfig>({
-    text: CREDIT_TEMPLATES[0].text,
-    fontFamily: 'Cinzel',
-    fontSize: 24,
-    color: '#ffffff',
-    alignment: 'center',
-    direction: 'bottom-to-top',
-    speedDuration: 25,
-    lineSpacing: 1.6,
-    roleSeparation: true,
-    textShadow: true,
-    background: {
-      source: 'color',
-      value: '#050508',
-      overlayOpacity: 0, // No artificial dimming by default
-      blur: 0,
-    },
-    audio: {
-      presetId: 'cinema-epic',
-      volume: 0.6,
-      muted: false,
-    },
-    aspectRatio: '9:16',
+  const [config, setConfig] = useState<CreditsConfig>(() =>
+    initialProject?.creditsConfig
+      ? cloneCreditsConfig(initialProject.creditsConfig)
+      : createDefaultCreditsConfig()
+  );
+
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(() => {
+    if (!initialProject) return null;
+    if (initialProject.isDraft) return initialProject.sourceProjectId ?? null;
+    return initialProject.id;
   });
+  const [activeProjectName, setActiveProjectName] = useState<string>(() => {
+    if (!initialProject) return '';
+    if (initialProject.isDraft) return initialProject.sourceProjectId ? initialProject.name : '';
+    return initialProject.name;
+  });
+  const [hasUnsavedEdits, setHasUnsavedEdits] = useState(false);
+  const [showProjectsSheet, setShowProjectsSheet] = useState(false);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -58,9 +85,51 @@ export const CreditsStudio: React.FC<CreditsStudioProps> = ({ onBack }) => {
   currentTimeRef.current = currentTime;
   isPlayingRef.current = isPlaying;
 
+  const hasEditedRef = useRef(false);
+
+  // Sync audio engine when hydrated from a saved project on mount
+  useEffect(() => {
+    if (initialProject?.creditsConfig) {
+      syncAudioEngineWithConfig(initialProject.creditsConfig.audio);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced auto-save draft so work is preserved even if user closes the app abruptly
+  useEffect(() => {
+    if (!hasEditedRef.current) return;
+    const timer = window.setTimeout(() => {
+      projectRepository
+        .saveDraft(
+          'credits',
+          config,
+          activeProjectId || undefined,
+          activeProjectName || undefined
+        )
+        .catch(() => {});
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [config, activeProjectId, activeProjectName]);
+
   // Partial config update helper
   const handleConfigChange = (updated: Partial<CreditsConfig>) => {
+    hasEditedRef.current = true;
+    setHasUnsavedEdits(true);
     setConfig((prev) => ({ ...prev, ...updated }));
+  };
+
+  const handleStartNewProject = () => {
+    setIsPlaying(false);
+    globalAudioEngine.stop();
+    const fresh = createDefaultCreditsConfig();
+    syncAudioEngineWithConfig(fresh.audio);
+    hasEditedRef.current = false;
+    setHasUnsavedEdits(false);
+    setActiveProjectId(null);
+    setActiveProjectName('');
+    currentTimeRef.current = 0;
+    setCurrentTime(0);
+    setConfig(fresh);
   };
 
   // Playback loop with accurate delta timing
@@ -142,35 +211,56 @@ export const CreditsStudio: React.FC<CreditsStudioProps> = ({ onBack }) => {
   return (
     <div className="flex flex-col h-screen bg-black text-white select-none overflow-hidden relative">
       {/* 1. Top clean header */}
-      <header className="flex-shrink-0 flex items-center justify-between px-4 py-2.5 bg-neutral-950 border-b border-neutral-900 z-30">
+      <header className="flex-shrink-0 flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5 bg-neutral-950 border-b border-neutral-900 z-30">
         <button
+          type="button"
           onClick={onBack}
           aria-label="Retour à l'accueil"
-          className="flex items-center gap-1.5 p-2 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white active:scale-95 transition-all text-xs"
+          className="flex items-center justify-center w-10 h-10 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white active:scale-95 transition-all shrink-0"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
 
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold uppercase tracking-wider text-neutral-200">
-            Générique
+        <div className="min-w-0 flex items-center justify-center gap-1.5 text-xs">
+          <span className="font-bold uppercase tracking-wider text-neutral-100 truncate max-w-[140px] sm:max-w-[220px]">
+            {activeProjectName || 'Générique'}
           </span>
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-          <span className="text-[10px] font-mono text-neutral-400">
+          <span className="text-neutral-600 shrink-0" aria-hidden="true">
+            ·
+          </span>
+          <span className="font-mono text-amber-400 tabular-nums shrink-0">
             {config.aspectRatio}
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <PWAInstallButton variant="compact" />
 
           <button
+            type="button"
+            onClick={() => {
+              setIsPlaying(false);
+              setShowProjectsSheet(true);
+            }}
+            aria-label="Enregistrer ou charger un projet"
+            title="Enregistrer ou charger un projet"
+            className={`relative flex items-center justify-center w-10 h-10 rounded-xl bg-neutral-900 border transition-all active:scale-95 ${
+              hasUnsavedEdits
+                ? 'border-amber-500/60 text-amber-400'
+                : 'border-neutral-800 text-neutral-300 hover:text-white'
+            }`}
+          >
+            <Save className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
             onClick={() => {
               setIsPlaying(false);
               setShowExportModal(true);
             }}
             aria-label="Exporter la vidéo"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs active:scale-95 transition-all shadow-md shadow-amber-500/20"
+            className="flex items-center gap-1.5 h-10 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs active:scale-95 transition-all shadow-md shadow-amber-500/20 whitespace-nowrap"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Exporter</span>
@@ -282,6 +372,35 @@ export const CreditsStudio: React.FC<CreditsStudioProps> = ({ onBack }) => {
           videoElement={videoElementRef.current}
         />
       )}
+
+      {/* Local Save & Load Projects Sheet */}
+      <ProjectSaveLoadSheet
+        isOpen={showProjectsSheet}
+        mode="studio"
+        currentKind="credits"
+        currentCreditsConfig={config}
+        activeProjectId={activeProjectId}
+        activeProjectName={activeProjectName}
+        onClose={() => setShowProjectsSheet(false)}
+        onSaved={(saved) => {
+          hasEditedRef.current = false;
+          setActiveProjectId(saved.id);
+          setActiveProjectName(saved.name);
+          setHasUnsavedEdits(false);
+        }}
+        onLoadProject={(project) => {
+          if (onOpenSavedProject) {
+            onOpenSavedProject(project);
+          } else if (project.creditsConfig) {
+            setConfig(cloneCreditsConfig(project.creditsConfig));
+            syncAudioEngineWithConfig(project.creditsConfig.audio);
+            setActiveProjectId(project.id);
+            setActiveProjectName(project.name);
+            setHasUnsavedEdits(false);
+          }
+        }}
+        onStartNew={handleStartNewProject}
+      />
     </div>
   );
 };
